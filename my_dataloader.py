@@ -5,14 +5,15 @@ from torch.utils.data import Dataset
 from random import randint
 import numpy as np
 from openslide import OpenSlide
+from torchvision.transforms import functional as TF
 
 class WSITileDataset(Dataset):
-    def __init__(self, wsi_paths, tissue_mask_paths, mask_paths, tile_size=256, transform=None, min_foreground_ratio=0.05):
+    def __init__(self, wsi_paths, tissue_mask_paths, mask_paths, tile_size=256, augmentations=None, min_foreground_ratio=0.05):
         self.wsi_paths = wsi_paths
         self.tissue_mask_paths = tissue_mask_paths  # Cesty k maskám tkáně (.npy)
         self.mask_paths = mask_paths
         self.tile_size = tile_size
-        self.transform = transform
+        self.augmentations = augmentations
         self.min_foreground_ratio = min_foreground_ratio  # Minimální podíl tkáně
 
         # Načteme masky tkáně
@@ -52,9 +53,11 @@ class WSITileDataset(Dataset):
                 tile = wsi.read_region((x, y), 0, (self.tile_size, self.tile_size)).convert("RGB")
                 mask_tile = mask.read_region((x, y), 0, (self.tile_size, self.tile_size)).convert("L")
 
-                # Normalizace a převod na tensor
-                if self.transform:
-                    tile = self.transform(tile)
-                    mask_tile = self.transform(mask_tile)
+                # Augmentace
+                if self.augmentations:
+                    tile, mask_tile = self.augmentations(tile, mask_tile)
+                else:
+                    tile = TF.to_tensor(tile)
+                    mask_tile = TF.to_tensor(mask_tile)
 
                 return tile, mask_tile
