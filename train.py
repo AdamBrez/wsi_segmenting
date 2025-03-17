@@ -12,7 +12,7 @@ from my_dataloader import WSITileDataset
 from my_model import Unet2D
 from my_functions import dice_loss, dice_coefficient, calculate_iou, basic_transform
 from my_augmentation import MyAugmentations
-
+import segmentation_models_pytorch as smp
 
 wsi_paths_train = [
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_001.tif",
@@ -96,7 +96,7 @@ mask_paths_test = [
 ]
 
 if __name__ == "__main__":
-
+    smp_model = smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1)
 # Začátek trénovacího skriptu
     color_jitter_params = {
         "brightness": 0.2,
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     )
 
     start = time.time()
-    epochs = 201
+    epochs = 101
     batch = 16
     # device = torch.device('cpu')
     device = torch.device('cuda:0')
@@ -130,9 +130,9 @@ if __name__ == "__main__":
     net = Unet2D(in_size=3)
     net = net.to(device)
 
-    optimizer = optim.AdamW(net.parameters(), lr=0.001, weight_decay=0.0001)
+    optimizer = optim.AdamW(net.parameters(), lr=0.0003, weight_decay=0.0001)
     # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[9,11], gamma=0.1)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, steps_per_epoch=len(trainloader), epochs=epochs, max_lr=0.001, pct_start=0.1, div_factor=10, final_div_factor=1)
 
     train_loss = []
     valid_loss = []
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     it =-1  #'https://krunker.io/?game=FRA:cniz2'
     for epoch in range(epochs):
         print(f"Epoch {epoch}/{epochs-1}")
-        if epoch % 10 == 0:
+        if epoch >=10  and epoch % 10 == 0:
             print(f"IoU: train: {np.mean(train_iou)}, val: {np.mean(valid_iou)}")
             print(f"Loss: train: {np.mean(train_loss)}, val: {np.mean(valid_loss)}")
             print(f"Dice: train: {np.mean(train_dice)}, val: {np.mean(valid_dice)}")
@@ -158,7 +158,7 @@ if __name__ == "__main__":
         for k,(data,lbl) in enumerate(trainloader):
             batch_time = time.time() - start_time
             batch_load_time.append(batch_time)
-            print(f"Batch {k} byl načten za {batch_time:.4f} s")
+            # print(f"Batch {k} byl načten za {batch_time:.4f} s")
             it+=1
 
             data = data.to(device)
@@ -190,6 +190,8 @@ if __name__ == "__main__":
         iou_tmp = []
         loss_tmp = []
         dice_tmp = []
+
+        # val loop
         for kk,(data, lbl) in enumerate(validloader):
             with torch.no_grad():
 
@@ -232,7 +234,7 @@ if __name__ == "__main__":
     test_dice_scores = []
     test_iou_scores = []
 
-    # Testování
+    # Test loop
     for kk, (data, lbl) in enumerate(testloader):
         if kk > 3:
             break

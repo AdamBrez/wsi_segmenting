@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import torchvision.transforms.functional as TF
+import torch.nn.functional as F
 
 # def dice_loss(X, Y):
 
@@ -9,12 +10,12 @@ import torchvision.transforms.functional as TF
 #     dice = ((2. * torch.sum(X*Y) + eps) / (torch.sum(X) + torch.sum(Y) + eps) )
 
 #     return 1 - dice
-def dice_loss(X, Y, reduction='mean'):
+def dice_loss(X, Y, reduction='mean', smooth=1.0):
     """
     X: predikce (B, ...)
     Y: ground truth (B, ...)
     """
-    eps = 0.000001 
+    # eps = 0.000001 //claude mi odstranil to eps a přidal smooth do argumentů tak hádám že to vyjde stejně
     
     # Převod na vhodný tvar pro výpočet po dávkách
     batch_size = X.size(0)
@@ -22,7 +23,9 @@ def dice_loss(X, Y, reduction='mean'):
     Y_flat = Y.view(batch_size, -1)
     
     intersection = (X_flat * Y_flat).sum(dim=1)
-    dice_coef = (2. * intersection + eps) / (X_flat.sum(dim=1) + Y_flat.sum(dim=1) + eps)
+    union = X_flat.sum(dim=1) + Y_flat.sum(dim=1)
+
+    dice_coef = (2. * intersection + smooth) / (union + smooth)
     dice_loss = 1 - dice_coef
     
     if reduction == 'mean':
@@ -31,8 +34,16 @@ def dice_loss(X, Y, reduction='mean'):
         return dice_loss.sum()
     else:
         return dice_loss
+
+def dice_bce_loss(pred, target, alpha=0.5, smooth=1.0):
+    # Dice component
+    dice_component = dice_loss(pred, target, smooth=smooth)
+    # BCE component
+    bce_component = F.binary_cross_entropy(pred, target)
+    # Combined loss
+    return alpha * dice_component + (1-alpha) * bce_component
     
-def dice_coefficient(X, Y, reduction='mean'):
+def dice_coefficient(X, Y, reduction='mean', smooth=1.0):
     """
     Výpočet Dice koeficientu mezi predikcí a ground truth.
     
@@ -42,7 +53,7 @@ def dice_coefficient(X, Y, reduction='mean'):
     
     Vrací hodnotu v rozmezí [0, 1], kde 1 znamená perfektní shodu.
     """
-    eps = 0.000001
+    # eps = 0.000001
     
     # Převod na vhodný tvar pro výpočet po dávkách
     batch_size = X.size(0)
@@ -50,7 +61,8 @@ def dice_coefficient(X, Y, reduction='mean'):
     Y_flat = Y.view(batch_size, -1)
     
     intersection = (X_flat * Y_flat).sum(dim=1)
-    dice_coef = (2. * intersection + eps) / (X_flat.sum(dim=1) + Y_flat.sum(dim=1) + eps)
+    union = X_flat.sum(dim=1) + Y_flat.sum(dim=1)
+    dice_coef = (2. * intersection + smooth) / (union + smooth)
     
     if reduction == 'mean':
         return dice_coef.mean()
@@ -72,8 +84,17 @@ def calculate_iou(lbl, output):
 
 def basic_transform(tile, mask):
     image = TF.to_tensor(tile)
-    image = TF.normalize(image, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    image = TF.normalize(image, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 
     mask = TF.to_tensor(mask)
 
     return image, mask
+
+def focal_loss(pred, target, gamma=2.0, alpha=0.25):
+    bce = F.binary_cross_entropy(pred, target, reduction='none')
+    p_t = pred * target + (1 - pred) * (1 - target)
+    loss = bce * ((1 - p_t) ** gamma)
+    if alpha >= 0:
+        alpha_t = alpha * target + (1 - alpha) * (1 - target)
+        loss = alpha_t * loss
+    return loss.mean()

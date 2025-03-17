@@ -6,8 +6,8 @@ class MyAugmentations:
     def __init__(self,
                  p_flip=0.5,
                  color_jitter_params=None,
-                 mean=(0.5, 0.5, 0.5),
-                 std=(0.5, 0.5, 0.5)):
+                 mean=(0.485, 0.456, 0.406),
+                 std=(0.229, 0.224, 0.225)):
         """
         p_flip: pravděpodobnost pro horizontální/vertikální flip
         color_jitter_params: dict s parametry pro ColorJitter (brightness, contrast, saturation, hue)

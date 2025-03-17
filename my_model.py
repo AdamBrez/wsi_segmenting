@@ -12,7 +12,7 @@ class unetConv2(nn.Module):
 
         self.conv=nn.Conv2d(in_size, out_size,filter_size,stride,pad)
         self.bn=nn.BatchNorm2d(out_size,momentum=0.1)
-        self.dropout=nn.Dropout2d(0.3)
+        self.dropout=nn.Dropout2d(0.1)
 
 
 
@@ -49,7 +49,7 @@ class unetUp(nn.Module):
 
         self.up = unetConvT2(in_size, out_size )
 
-        self.dropout = nn.Dropout2d(0.2)  # Dropout v upsampling části
+        self.dropout = nn.Dropout2d(0.1)  # Dropout v upsampling části
 
     def forward(self, inputs1, inputs2):
 
@@ -72,7 +72,7 @@ class unetUp(nn.Module):
 
 
 class Unet2D(nn.Module):
-    def __init__(self, filters=(np.array([4, 8, 16, 32])).astype(int),in_size=1,out_size=1):
+    def __init__(self, filters=(np.array([16, 32, 64, 128])).astype(int),in_size=1,out_size=1):
         super().__init__()
 
         self.out_size = out_size
@@ -113,9 +113,10 @@ class Unet2D(nn.Module):
 
         for i, m in enumerate(self.modules()):
             if isinstance(m, nn.Conv2d):
-                init.xavier_normal_(m.weight)
-                init.constant_(m.bias, 0)
-
+                # init.xavier_normal_(m.weight)
+                # init.constant_(m.bias, 0)
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(m.bias, 0)
 
 
 
