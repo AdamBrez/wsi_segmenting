@@ -6,11 +6,10 @@ import matplotlib.pyplot as plt
 import time
 import torch
 import torch.optim as optim
-from torchvision.transforms import ToTensor, Compose, Normalize
 from torch.utils.data import DataLoader
 from my_dataloader import WSITileDataset
 from my_model import Unet2D
-from my_functions import dice_loss, dice_coefficient, calculate_iou, basic_transform
+from my_functions import dice_coefficient, calculate_iou, basic_transform, dice_bce_loss
 from my_augmentation import MyAugmentations
 import segmentation_models_pytorch as smp
 
@@ -108,13 +107,13 @@ if __name__ == "__main__":
     augmentations = MyAugmentations(
         p_flip=0.5,
         color_jitter_params=color_jitter_params,
-        mean=(0.5, 0.5, 0.5),
-        std=(0.5, 0.5, 0.5)
+        mean=(0.485, 0.456, 0.406),
+        std=(0.229, 0.224, 0.225)
     )
 
     start = time.time()
     epochs = 101
-    batch = 16
+    batch = 32
     # device = torch.device('cpu')
     device = torch.device('cuda:0')
     train_dataset = WSITileDataset(wsi_paths=wsi_paths_train, tissue_mask_paths=tissue_mask_paths_train, mask_paths=mask_paths_train, tile_size=256, augmentations=augmentations)
@@ -127,12 +126,12 @@ if __name__ == "__main__":
     test_dataset = WSITileDataset(wsi_paths=wsi_paths_test, tissue_mask_paths=tissue_mask_paths_test, mask_paths=mask_paths_test, tile_size=256, augmentations=basic_transform)
     testloader = DataLoader(test_dataset,batch_size=1, num_workers=0, shuffle=True)
 
-    net = Unet2D(in_size=3)
+    net = Unet2D(in_size=3, out_size=1)
     net = net.to(device)
 
-    optimizer = optim.AdamW(net.parameters(), lr=0.0003, weight_decay=0.0001)
+    optimizer = optim.AdamW(net.parameters(), lr=0.0003, weight_decay=0)
     # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[9,11], gamma=0.1)
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, steps_per_epoch=len(trainloader), epochs=epochs, max_lr=0.001, pct_start=0.1, div_factor=10, final_div_factor=1)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, steps_per_epoch=len(trainloader), epochs=epochs, max_lr=0.001, pct_start=0.3, div_factor=25, final_div_factor=1000)
 
     train_loss = []
     valid_loss = []
@@ -168,13 +167,15 @@ if __name__ == "__main__":
             output = net(data)
 
             output = torch.sigmoid(output)
-            loss = dice_loss(output, lbl)
+            loss = dice_bce_loss(output, lbl)
             dice = dice_coefficient(output, lbl)
             iou = calculate_iou(output=output, lbl=lbl)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            scheduler.step()
 
             iou_tmp.append(iou)
             loss_tmp.append(loss.cpu().detach().numpy())
@@ -202,7 +203,7 @@ if __name__ == "__main__":
                 output = net(data)
 
                 output = torch.sigmoid(output)
-                loss = dice_loss(output, lbl)
+                loss = dice_bce_loss(output, lbl)
                 dice = dice_coefficient(output, lbl)
 
                 # Výpočet metrik
@@ -216,7 +217,6 @@ if __name__ == "__main__":
         valid_iou.append(np.mean(iou_tmp))
         valid_dice.append(np.mean(dice_tmp))
 
-        scheduler.step()
 
     plt.figure(figsize=(10, 5))
     plt.plot(train_loss, label='Tréninková ztráta', color='blue', linestyle='--')
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     plt.title('Ztrátová křivka')
     plt.legend()
     plt.grid(True)
-    plt.savefig(r'C:\Users\USER\Desktop\loss_curve_200.png')
+    plt.savefig(r'C:\Users\USER\Desktop\my_unet_100e.png')
     plt.show(block=False)
     plt.pause(5)
     plt.close()
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     print(f"Average batch load time: {np.mean(batch_load_time):.4f} s")
     print("Proběhl celý skript.")
 
-    model_save_path = r"C:\Users\USER\Desktop\weights\unet_model_200.pth"
+    model_save_path = r"C:\Users\USER\Desktop\weights\my_unet_100e.pth"
 
     # Uložení váh modelu
     torch.save(net.state_dict(), model_save_path)

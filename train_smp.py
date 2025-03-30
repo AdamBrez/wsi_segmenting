@@ -6,11 +6,9 @@ import matplotlib.pyplot as plt
 import time
 import torch
 import torch.optim as optim
-from torchvision.transforms import ToTensor, Compose, Normalize
 from torch.utils.data import DataLoader
 from my_dataloader import WSITileDataset
-from my_model import Unet2D
-from my_functions import dice_loss, dice_coefficient, calculate_iou, basic_transform, dice_bce_loss
+from my_functions import dice_coefficient, calculate_iou, basic_transform, dice_bce_loss
 from my_augmentation import MyAugmentations
 import segmentation_models_pytorch as smp
 
@@ -28,6 +26,9 @@ wsi_paths_train = [
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_011.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_012.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_013.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_019.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_020.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_021.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_089.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_091.tif",
 ]
@@ -45,6 +46,9 @@ tissue_mask_paths_train = [
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_011.npy",
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_012.npy",
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_013.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_019.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_020.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_021.npy",
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_089.npy",
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_091.npy",
 ]
@@ -62,6 +66,9 @@ mask_paths_train = [
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_011.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_012.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_013.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_019.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_020.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_021.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_089.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_091.tif",
 ]
@@ -69,30 +76,42 @@ mask_paths_train = [
 wsi_paths_val = [
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_014.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_015.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_022.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_023.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_084.tif",
 ]
 tissue_mask_paths_val = [
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_014.npy",
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_015.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_022.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_023.npy",
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_084.npy",
 ]
 mask_paths_val = [
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_014.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_015.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_022.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_023.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_084.tif",
 ]
 
 wsi_paths_test = [
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_017.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_018.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_024.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_025.tif",
 ]
 tissue_mask_paths_test = [
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_017.npy",
     r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_018.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_024.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_025.npy",
 ]
 mask_paths_test = [
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_017.tif",
     r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_018.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_024.tif",
+    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_025.tif",
 ]
 
 if __name__ == "__main__":
@@ -117,7 +136,7 @@ if __name__ == "__main__":
     batch = 32
     # device = torch.device('cpu')
     device = torch.device('cuda:0')
-    train_dataset = WSITileDataset(wsi_paths=wsi_paths_train, tissue_mask_paths=tissue_mask_paths_train, mask_paths=mask_paths_train, tile_size=256, augmentations=augmentations)
+    train_dataset = WSITileDataset(wsi_paths=wsi_paths_train, tissue_mask_paths=tissue_mask_paths_train, mask_paths=mask_paths_train, tile_size=256, augmentations=basic_transform)
     trainloader = DataLoader(train_dataset, batch_size=batch, shuffle=True, num_workers=4)
 
 
@@ -127,12 +146,13 @@ if __name__ == "__main__":
     test_dataset = WSITileDataset(wsi_paths=wsi_paths_test, tissue_mask_paths=tissue_mask_paths_test, mask_paths=mask_paths_test, tile_size=256, augmentations=basic_transform)
     testloader = DataLoader(test_dataset,batch_size=1, num_workers=0, shuffle=True)
 
+    # net = smp.DeepLabV3Plus(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
     net = smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
     net = net.to(device)
 
-    optimizer = optim.AdamW(net.parameters(), lr=0.0003)
-    # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[9,11], gamma=0.1)
-    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, steps_per_epoch=len(trainloader), epochs=epochs, max_lr=0.001, pct_start=0.3, div_factor=25, final_div_factor=1000)
+    optimizer = optim.AdamW(net.parameters(), lr=0.01)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30,70], gamma=0.1)
+    # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, steps_per_epoch=len(trainloader), epochs=epochs, max_lr=0.001, pct_start=0.3, div_factor=25, final_div_factor=1000)
 
     train_loss = []
     valid_loss = []
@@ -179,7 +199,7 @@ if __name__ == "__main__":
             loss.backward()
             optimizer.step()
             
-            scheduler.step()
+            # scheduler.step()
             
             iou_tmp.append(iou)
             loss_tmp.append(loss.cpu().detach().numpy())
@@ -220,6 +240,8 @@ if __name__ == "__main__":
         valid_loss.append(np.mean(loss_tmp))
         valid_iou.append(np.mean(iou_tmp))
         valid_dice.append(np.mean(dice_tmp))
+        
+        scheduler.step()
 
 
     plt.figure(figsize=(10, 5))
@@ -230,7 +252,7 @@ if __name__ == "__main__":
     plt.title('Ztrátová křivka')
     plt.legend()
     plt.grid(True)
-    plt.savefig(r'C:\Users\USER\Desktop\unet_16_3_100e.png')
+    plt.savefig(r'C:\Users\USER\Desktop\unet_smp_e100_9920len.png')
     plt.show(block=False)
     plt.pause(5)
     plt.close()
@@ -283,7 +305,7 @@ if __name__ == "__main__":
     print(f"Average batch load time: {np.mean(batch_load_time):.4f} s")
     print("Proběhl celý skript.")
 
-    model_save_path = r"C:\Users\USER\Desktop\weights\unet_16_3_100e.pth"
+    model_save_path = r"C:\Users\USER\Desktop\weights\unet_smp_e100_9920len.pth"
 
     # Uložení váh modelu
     torch.save(net.state_dict(), model_save_path)

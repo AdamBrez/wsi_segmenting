@@ -8,6 +8,10 @@ import numpy as np
 from openslide import OpenSlide
 from torchvision.transforms import functional as TF
 
+"""
+    V tomto skriptu mám vytvořený custom dataset, který používám pro načítání dlaždic do sítě.
+"""
+
 class WSITileDataset(Dataset):
     def __init__(self, wsi_paths, tissue_mask_paths, mask_paths, tile_size=256, augmentations=None, min_foreground_ratio=0.05):
         self.wsi_paths = wsi_paths
@@ -21,7 +25,7 @@ class WSITileDataset(Dataset):
         self.tissue_masks = [np.load(path) for path in self.tissue_mask_paths]
 
     def __len__(self):
-        return 1280  # Počet dlaždic na epochu
+        return 9920  # Počet dlaždic na epochu
 
     def __getitem__(self, idx):
         while True:
