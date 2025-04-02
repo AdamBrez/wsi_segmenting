@@ -42,7 +42,7 @@ def dice_bce_loss(pred, target, alpha=0.5, smooth=1.0):
     bce_component = F.binary_cross_entropy(pred, target)
     # Combined loss
     return alpha * dice_component + (1-alpha) * bce_component
-def dice_coef(X, Y, reduction=None, smooth=1.0):
+def dice_coef(X:torch.Tensor, Y:torch.Tensor, reduction=None, smooth=1.0):
     """
     Výpočet Dice koeficientu mezi predikcí a ground truth.
     
@@ -72,7 +72,7 @@ def dice_coef(X, Y, reduction=None, smooth=1.0):
     else:
         return dice_coef
     
-def dice_coefficient(X, Y, reduction=None, smooth=0.000001):
+def dice_coefficient(X:torch.Tensor, Y:torch.Tensor, reduction=None, smooth=0.000001):
     """
     Výpočet Dice koeficientu mezi predikcí a ground truth.
     
@@ -85,10 +85,13 @@ def dice_coefficient(X, Y, reduction=None, smooth=0.000001):
     # eps = 0.000001
     
     # Převod na vhodný tvar pro výpočet po dávkách
-    batch_size = X.size(0)
-    X_flat = X.view(batch_size, -1)
-    Y_flat = Y.view(batch_size, -1)
+    X_binary = (X > 0.5).float()
+    Y_binary = (Y > 0.5).float()
+    batch_size = X_binary.size(0)
+    X_flat = X_binary.view(batch_size, -1)
+    Y_flat = Y_binary.view(batch_size, -1)
     
+
     intersection = (X_flat * Y_flat).sum(dim=1)
     union = X_flat.sum(dim=1) + Y_flat.sum(dim=1)
     dice_coef = (2. * intersection + smooth) / (union + smooth)
@@ -100,14 +103,14 @@ def dice_coefficient(X, Y, reduction=None, smooth=0.000001):
     else:
         return dice_coef
 
-def calculate_iou(lbl, output):
+def calculate_iou(lbl:torch.Tensor, output:torch.Tensor):
     """
     Výpočet Intersection over Union (IoU) na úrovni jednotlivých snímků.
     """
     # Convert to numpy and apply threshold
     lbl_np = lbl.detach().cpu().numpy() > 0.5
     output_np = output.detach().cpu().numpy() > 0.5
-    
+
     batch_size = lbl_np.shape[0]
     iou_scores = []
     
@@ -155,15 +158,18 @@ def focal_loss(pred, target, gamma=2.0, alpha=0.25):
 if __name__ == "__main__":
     # Test Dice loss
     # Create identical tensors
-    identical_tensor = torch.ones(1, 100, 100)
+    identical_tensor = torch.rand(1, 5, 4)
+    print(identical_tensor)
     result = dice_coefficient(identical_tensor, identical_tensor, "mean")
     print(f"Dice coefficient for identical tensors: {result}")
+    print(f"IoU for identical tensors: {calculate_iou(identical_tensor, identical_tensor)}")
+    
     
     # Your original image test
-    from PIL import Image
-    img = Image.open(r'C:\Users\USER\Desktop\img_sem\test_dice1.png')
-    img_copy = Image.open(r"C:\Users\USER\Desktop\img_sem\test_dice2.png")
-    img = np.array(img)/255
-    img_copy = np.array(img_copy)/255
-    result = dice_coef(torch.tensor(img), torch.tensor(img_copy), "mean")
-    print(f"Dice coefficient for loaded images: {result}")
+    # from PIL import Image
+    # img = Image.open(r'C:\Users\USER\Desktop\img_sem\test_dice1.png')
+    # img_copy = Image.open(r"C:\Users\USER\Desktop\img_sem\test_dice2.png")
+    # img = np.array(img)/255
+    # img_copy = np.array(img_copy)/255
+    # result = dice_coef(torch.tensor(img), torch.tensor(img_copy), "mean")
+    # print(f"Dice coefficient for loaded images: {result}")
