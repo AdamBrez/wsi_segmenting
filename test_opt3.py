@@ -20,12 +20,12 @@ import segmentation_models_pytorch as smp
 """
 
 # # Cesta k modelu a obrázkům
-model_weights_path = r"C:\Users\USER\Desktop\weights\unet_16_3_100e.pth"
-wsi_image_path = r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_018.tif"  # Cesta k WSI obrazu
-output_hdf5_path = r"C:\Users\USER\Desktop\test_output\test_opt3_t_018.h5"
-tile_size = 256  # Velikost jednotlivých výřezů (tiles)
-overlap = 0  # Překryv mezi dlaždicemi
-threshold = 0.5  # Prahování pro binární masku
+model_weights_path = r"C:\Users\USER\Desktop\weights\unet_smp_e100_9920lenV2.pth"
+wsi_image_path = r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_089.tif"  # Cesta k WSI obrazu
+output_hdf5_path = r"C:\Users\USER\Desktop\test_output\mask089V2.h5"
+tile_size = 256 
+overlap = 0  
+threshold = 0.5
 
 start_time = time.time()
 
@@ -40,12 +40,14 @@ model.eval()
 wsi = openslide.OpenSlide(wsi_image_path)
 
 # Vytvoření DeepZoomGeneratoru
-deepzoom = DeepZoomGenerator(wsi, tile_size=tile_size, overlap=overlap, limit_bounds=True)
-
+deepzoom = DeepZoomGenerator(wsi, tile_size=tile_size, overlap=overlap, limit_bounds=False)
+print(deepzoom.level_dimensions)
+print(wsi.level_dimensions)
 # Použití nejvyšší úrovně pyramidy (nativní rozlišení)
-level = deepzoom.level_count - 1  # Nejvyšší rozlišení
+level = deepzoom.level_count - 3  # Nejvyšší rozlišení
 level_dimensions = deepzoom.level_dimensions[level]
-print(f"Rozměry WSI na nejvyšší úrovni: {level_dimensions}")
+print(level_dimensions[::-1])
+print(f"Rozměry WSI na úrovni: {level} jsou: {level_dimensions} a počet dlaždic je: {deepzoom.level_tiles[level]}")
 
 # Vytvoření HDF5 souboru pro ukládání masek
 with h5py.File(output_hdf5_path, "w") as hdf5_file:
@@ -55,7 +57,7 @@ with h5py.File(output_hdf5_path, "w") as hdf5_file:
         shape=level_dimensions[::-1],  # (výška, šířka)
         # shape=(level_dimensions[1], level_dimensions[0], 3),
         dtype=bool,  # Boolean pro úsporu paměti
-        chunks=(tile_size, tile_size),  # Chunky odpovídají velikosti tiles
+        chunks=(tile_size, tile_size), 
         compression="gzip"  # Komprese pro úsporu místa
     )
 
@@ -66,22 +68,28 @@ with h5py.File(output_hdf5_path, "w") as hdf5_file:
             # Načtení dlaždice z DeepZoomGenerator
             tile = deepzoom.get_tile(level, (col, row))
             tile = tile.convert("RGB")  # Převod na RGB
-            tile_tensor = ToTensor()(tile).unsqueeze(0).to(device)
+            tile_tensor = ToTensor()(tile).unsqueeze(0).to(device) # to unsqueeze(0) přidá dimenzi pro batch size
 
             # # Inferování s modelem
             with torch.no_grad():
                 prediction = model(tile_tensor)
                 prediction = torch.sigmoid(prediction).squeeze().cpu().numpy()
 
-            # # Prahování na boolean masku
+            # Prahování na boolean masku
             binary_tile = prediction >= threshold
 
             # # Získání souřadnic dlaždice
             # gray_tile = np.array(tile.convert("RGB"))
+            binary_y, binary_x = binary_tile.shape
             x, y = col * tile_size, row * tile_size
             
-            # Uložení predikované dlaždice do HDF5 datasetu
-            dset[y:y + tile_size, x:x + tile_size] = binary_tile
+            # Uložení predikované dlaždice do HDF5 datasetu / Chybí ošetřit neuplné dlaždice na okrajích
+            # podle mě binary tile nemusí mít size vždy 256x256, ale menší tím padem na okraji může vzniknout černý prazdny okraj který není segmentace obrazu ale prostě navíc
+            if binary_tile.shape != (tile_size, tile_size):
+                print(f"Rozměr dlaždice col{col} row{row} je {binary_tile.shape}")
+                print(f"Dlaždice col{col} row{row} bude na pozici: ({y}:{y + binary_y}, {x}:{x + binary_x})")
+
+            dset[y:y + binary_y, x:x + binary_x] = binary_tile
 
 print(f"Predikovaná maska byla uložena do {output_hdf5_path}.")
 
