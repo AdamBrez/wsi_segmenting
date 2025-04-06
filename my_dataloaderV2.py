@@ -3,7 +3,7 @@ os.add_dll_directory(r"C:\Users\USER\miniforge3\envs\mamba_env\lib\site-packages
 
 from PIL import Image
 from torch.utils.data import Dataset
-from random import randint
+from random import randint, random
 import numpy as np
 from openslide import OpenSlide
 from torchvision.transforms import functional as TF
@@ -29,14 +29,18 @@ class WSITileDataset(Dataset):
 
     def __getitem__(self, idx):
         while True:
+            choice = random()
             # Náhodný výběr WSI a jeho masky tkáně
             wsi_idx = randint(0, len(self.wsi_paths) - 1)
             wanted_level = 2
             
             wsi = OpenSlide(self.wsi_paths[wsi_idx])
             mask = OpenSlide(self.mask_paths[wsi_idx])
-            tissue_mask = np.load(self.tissue_mask_paths[wsi_idx])
-            
+            if choice < 0.5:
+                tissue_mask = np.load(self.tissue_mask_paths[wsi_idx])
+            else:
+                mask_np = np.array(mask.read_region(location=(0, 0), level=6, size=mask.level_dimensions[6]).convert("L"))
+                tissue_mask = (mask_np > 128).astype(np.uint8) * 255  # binarizace masky
             # Rozměry WSI a masky tkáně
             wsi_width, wsi_height = wsi.level_dimensions[wanted_level]
             native_width, native_height = wsi.level_dimensions[0]
