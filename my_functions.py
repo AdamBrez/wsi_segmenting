@@ -139,8 +139,17 @@ def calculate_iou(lbl:torch.Tensor, output:torch.Tensor):
     return np.mean(iou_scores) if iou_scores else 0.0
 
 def basic_transform(tile, mask):
+
+    """
+    Konstatnty jsou pro případ, že se jako enkóder využívá typ,
+    který byl trénován na ImageNetu.   
+    """
+
+    IMAGENET_MEAN = [0.485, 0.456, 0.406]
+    IMAGENET_STD = [0.229, 0.224, 0.225]
+
     image = TF.to_tensor(tile)
-    image = TF.normalize(image, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+    image = TF.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
     mask = TF.to_tensor(mask)
 
