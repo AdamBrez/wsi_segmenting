@@ -1,7 +1,21 @@
+# --- START OF FILE train_gemini.py ---
+
 # --- START OF FILE train_smp_with_metrics.py ---
 
 import os
-os.add_dll_directory(r"C:\Users\USER\miniforge3\envs\mamba_env\lib\site-packages\openslide\openslide-bin-4.0.0.6-windows-x64\openslide-bin-4.0.0.6-windows-x64\bin")
+# Pozor: Tato cesta je specifická pro Váš systém. Pokud skript spouštíte jinde,
+# bude potřeba ji upravit nebo zajistit, aby byla knihovna OpenSlide dostupná jinak.
+# Je možné, že na jiném systému (Linux, macOS) nebo s jinou instalací Conda/Python
+# tento řádek nebude potřeba vůbec.
+try:
+    openslide_dll_path = r"C:\Users\USER\miniforge3\envs\mamba_env\lib\site-packages\openslide\openslide-bin-4.0.0.6-windows-x64\openslide-bin-4.0.0.6-windows-x64\bin"
+    if os.path.exists(openslide_dll_path) and os.name == 'nt': # Jen pro Windows a pokud cesta existuje
+        os.add_dll_directory(openslide_dll_path)
+    elif os.name == 'nt':
+        print(f"VAROVÁNÍ: Cesta k DLL OpenSlide nebyla nalezena: {openslide_dll_path}")
+except Exception as e:
+    print(f"VAROVÁNÍ: Nepodařilo se přidat cestu k DLL OpenSlide: {e}")
+
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,13 +26,13 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 # Odebrány importy vlastních metrik, nahrazeny smp
 # from my_functions import dice_coefficient, calculate_iou, basic_transform, dice_bce_loss
-from my_functions import basic_transform, dice_bce_loss # Ponecháme loss a transformaci
+from my_functions import basic_transform # Ponecháme loss a transformaci
 import segmentation_models_pytorch as smp
 # <<< Import smp metrik >>>
 from segmentation_models_pytorch.metrics import precision, recall, f1_score, iou_score, get_stats
 from new_dataset import WSITileDatasetBalanced
 from my_augmentation import MyAugmentations # Předpokládáme verzi MyAugmentationsProbColor
-from segmentation_models_pytorch.losses import TverskyLoss
+from segmentation_models_pytorch.losses import TverskyLoss, FocalLoss
 
 
 # trénovací data
@@ -91,7 +105,7 @@ if __name__ == "__main__":
     # Zkontroluj název třídy, pokud jsi ji uložil jinak
     augmentations = MyAugmentations( # Nebo MyAugmentationsProbColor
         p_flip=0.5,
-        p_color=0.8, # Pokud používáš MyAugmentationsProbColor
+        p_color=0.5, # Pokud používáš MyAugmentationsProbColor
         color_jitter_params=color_jitter_params,
         mean=(0.485, 0.456, 0.406),
         std=(0.229, 0.224, 0.225)
@@ -99,7 +113,7 @@ if __name__ == "__main__":
 
     # --- Nastavení tréninku ---
     start = time.time()
-    epochs = 81
+    epochs = 61
     batch = 32
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Používám zařízení: {device}")
@@ -117,7 +131,8 @@ if __name__ == "__main__":
         wsi_paths=wsi_paths_val, tissue_mask_paths=tissue_mask_paths_val,
         mask_paths=mask_paths_val, gt_lowres_mask_paths=gt_lowres_mask_paths_val,
         tile_size=256, wanted_level=2, positive_sampling_prob=0.6, # Můžeš zvážit positive_sampling_prob=0.5 pro val
-        min_cancer_ratio_in_tile=0.05, augmentations=basic_transform # Bez augmentací pro validaci
+        min_cancer_ratio_in_tile=0.05, augmentations=basic_transform, # Bez augmentací pro validaci
+        dataset_len=3200
     )
     validloader = DataLoader(val_dataset, batch_size=batch, num_workers=4, shuffle=False, pin_memory=True)
 
@@ -125,7 +140,8 @@ if __name__ == "__main__":
         wsi_paths=wsi_paths_test, tissue_mask_paths=tissue_mask_paths_test,
         mask_paths=mask_paths_test, gt_lowres_mask_paths=gt_lowres_mask_paths_test,
         tile_size=256, wanted_level=2, positive_sampling_prob=0.6, # Můžeš zvážit positive_sampling_prob=0.5 pro test
-        min_cancer_ratio_in_tile=0.05, augmentations=basic_transform # Bez augmentací pro test
+        min_cancer_ratio_in_tile=0.05, augmentations=basic_transform, # Bez augmentací pro test
+        dataset_len=5600
     )
     testloader = DataLoader(test_dataset, batch_size=1, num_workers=0, shuffle=False) # batch_size=1 pro test je běžný
 
@@ -134,9 +150,10 @@ if __name__ == "__main__":
     net = net.to(device)
 
     optimizer = optim.AdamW(net.parameters(), lr=0.001)
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 40, 70], gamma=0.1)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 50], gamma=0.1)
 
-    tversky_loss = TverskyLoss(mode='binary', alpha=0.7, beta=0.3, from_logits=True) # Pro příklad
+    tversky_loss = TverskyLoss(mode='binary', alpha=0.6, beta=0.4, from_logits=True) # Pro příklad
+    focal_loss = FocalLoss(mode='binary', alpha=None, gamma=2.0) # Pro příklad
 
     # --- Listy pro ukládání metrik ---
     train_loss_hist = []
@@ -151,7 +168,18 @@ if __name__ == "__main__":
     train_recall_hist = []
     valid_recall_hist = []
 
+    # --- Nastavení pro Early Stopping ---
+    patience = 20 # Počet epoch bez zlepšení validační loss, po kterých se trénink zastaví
+    best_val_loss = float('inf') # Inicializace nejlepší validační ztráty
+    epochs_no_improve = 0 # Počítadlo epoch bez zlepšení
+    early_stop = False # Flag pro signalizaci zastavení
+    # Cesta pro uložení nejlepšího modelu podle validační ztráty
+    best_model_path = r"C:\Users\USER\Desktop\weights\net_smp_best_val_loss_e{}_len{}.pth".format(epochs, len(train_dataset))
+    # Zajistíme existenci adresáře pro váhy
+    os.makedirs(os.path.dirname(best_model_path), exist_ok=True)
+
     print(f"Start tréninku na {epochs} epoch...")
+    print(f"Early stopping aktivováno s patience={patience}")
     # --- Trénovací smyčka ---
     for epoch in range(epochs):
         print("-" * 20)
@@ -175,7 +203,7 @@ if __name__ == "__main__":
 
             # Forward pass
             output_logits = net(data) # Získat logits [B, 1, H, W]
-            loss = tversky_loss(output_logits, lbl) # Loss pro logits
+            loss = focal_loss(output_logits, lbl) # Loss pro logits
             output_probs = torch.sigmoid(output_logits) # Pravděpodobnosti [B, 1, H, W]
 
             # Výpočet loss (předpokládá logits jako vstup)
@@ -228,7 +256,7 @@ if __name__ == "__main__":
                 lbl = lbl.to(device) # Očekáváme float tensor [0, 1]
 
                 output_logits = net(data) # Logits [B, 1, H, W]
-                loss = tversky_loss(output_logits, lbl) # Loss pro logits
+                loss = focal_loss(output_logits, lbl) # Loss pro logits
                 output_probs = torch.sigmoid(output_logits) # Pravděpodobnosti [B, 1, H, W]
 
                 # Výpočet loss
@@ -260,6 +288,25 @@ if __name__ == "__main__":
 
         print(f"Valid - Loss: {avg_valid_loss:.4f}, Dice: {epoch_val_dice:.4f}, IoU: {epoch_val_iou:.4f}, Precision: {epoch_val_precision:.4f}, Recall: {epoch_val_recall:.4f}")
 
+        # --- Kontrola Early Stopping ---
+        if avg_valid_loss < best_val_loss:
+            best_val_loss = avg_valid_loss
+            epochs_no_improve = 0
+            # Uložení nejlepšího modelu
+            try:
+                torch.save(net.state_dict(), best_model_path)
+                print(f"Nalezeno zlepšení validační loss: {best_val_loss:.4f}. Model uložen do {best_model_path}")
+            except Exception as save_err:
+                print(f"Chyba při ukládání nejlepšího modelu: {save_err}")
+        else:
+            epochs_no_improve += 1
+            print(f"Validační loss se nezlepšila. Počet epoch bez zlepšení: {epochs_no_improve}/{patience}")
+
+        if epochs_no_improve >= patience:
+            early_stop = True
+            print(f"\nEarly stopping! Validační loss se nezlepšila po {patience} epochách.")
+            break # Ukončení trénovací smyčky
+
         # Krok scheduleru
         scheduler.step()
         print(f"Current LR: {scheduler.get_last_lr()[0]}")
@@ -273,19 +320,52 @@ if __name__ == "__main__":
 
 
     # --- Konec tréninku ---
-    print("\nTrénink dokončen.")
+    if early_stop:
+        print(f"\nTrénink zastaven předčasně v epoše {epoch}.")
+        # Pokud došlo k early stopping, načteme nejlepší model pro testování
+        print(f"Načítání nejlepšího modelu z: {best_model_path}")
+        try:
+            net.load_state_dict(torch.load(best_model_path))
+            print("Nejlepší model úspěšně načten.")
+        except Exception as load_err:
+            print(f"Chyba při načítání nejlepšího modelu: {load_err}. Pokračuji s modelem z poslední epochy.")
+            # V tomto případě se testování provede s modelem z poslední epochy před zastavením
+    else:
+        print("\nTrénink dokončen (dosažen maximální počet epoch).")
+        # Pokud trénink doběhl do konce, nejlepší model už mohl být uložen,
+        # ale model `net` obsahuje váhy z poslední epochy. Můžete se rozhodnout,
+        # zda chcete testovat poslední model, nebo explicitně načíst nejlepší uložený.
+        # Pro konzistenci s early stopping načteme nejlepší uložený model i zde,
+        # pokud existuje a pokud se liší od poslední epochy.
+        if os.path.exists(best_model_path):
+             print(f"Načítání nejlepšího modelu z: {best_model_path} pro finální testování.")
+             try:
+                 net.load_state_dict(torch.load(best_model_path))
+                 print("Nejlepší model úspěšně načten pro testování.")
+             except Exception as load_err:
+                 print(f"Chyba při načítání nejlepšího modelu: {load_err}. Pokračuji s modelem z poslední epochy.")
+        else:
+             print("Nejlepší model nebyl nalezen (nebo nebyl nikdy uložen), testuji model z poslední epochy.")
+
 
     # --- Vykreslení loss křivky ---
     plt.figure(figsize=(10, 5))
-    plt.plot(train_loss_hist, label='Tréninková ztráta', color='blue', linestyle='--')
-    plt.plot(valid_loss_hist, label='Validační ztráta', color='orange', linestyle='-')
+    # Zobrazíme jen data do epochy, ve které trénink skončil (důležité pro early stopping)
+    actual_epochs_trained = len(train_loss_hist)
+    plt.plot(range(actual_epochs_trained), train_loss_hist, label='Tréninková ztráta', color='blue', linestyle='--')
+    plt.plot(range(actual_epochs_trained), valid_loss_hist, label='Validační ztráta', color='orange', linestyle='-')
+    # Vyznačení epochy, kdy byl nalezen nejlepší model (pokud ne v poslední epoše)
+    if best_val_loss != float('inf'):
+        best_epoch = np.argmin(valid_loss_hist) # Najde index (epochu) s nejnižší validační ztrátou
+        plt.scatter(best_epoch, best_val_loss, color='red', label=f'Nejlepší val. loss (Epocha {best_epoch})', zorder=5)
+
     plt.xlabel('Epocha')
     plt.ylabel('Ztráta')
-    plt.title('Ztrátová křivka')
+    plt.title(f'Ztrátová křivka (Trénink ukončen v epoše {actual_epochs_trained-1})')
     plt.legend()
     plt.grid(True)
     # Uložení grafu
-    loss_plot_path = r'C:\Users\USER\Desktop\loss_curve_unet_smp_e{}_len{}.png'.format(epochs, len(train_dataset))
+    loss_plot_path = r'C:\Users\USER\Desktop\los_curve_unet_smp_stopped_e{}_len{}.png'.format(actual_epochs_trained, len(train_dataset))
     plt.savefig(loss_plot_path)
     print(f"Graf loss uložena do: {loss_plot_path}")
     #plt.show(block=False) # Zobrazí neblokující okno
@@ -293,12 +373,12 @@ if __name__ == "__main__":
     plt.close()            # Zavře okno
 
     # --- Testovací fáze ---
-    print("\nZačátek testování...")
+    print("\nZačátek testování (s nejlepším modelem dle validační loss)...")
     net.eval()
     # Akumulátory statistik pro test
     test_tp, test_fp, test_fn, test_tn = 0, 0, 0, 0
     THRESHOLD = 0.5 # Prah pro binární klasifikaci
-    with torch.no_grad():
+    with torch.inference_mode():
         for kk, (data, lbl) in enumerate(tqdm(testloader, desc="Testing")):
             data = data.to(device)
             lbl = lbl.to(device) # Float tensor [0, 1]
@@ -343,7 +423,7 @@ if __name__ == "__main__":
                 plt.imshow(lbl[0, 0, :, :].cpu().numpy(), cmap="gray") # Ground truth
                 plt.axis('off')
 
-                plot_save_path = r'C:\Users\USER\Desktop\test_sample_{}_e{}_len{}.png'.format(kk, epochs, len(train_dataset))
+                plot_save_path = r'C:\Users\USER\Desktop\est_sample_{}_stopped_e{}_len{}.png'.format(kk, actual_epochs_trained, len(train_dataset))
                 plt.savefig(plot_save_path)
                 print(f"Testovací obrázek {kk} uložen do: {plot_save_path}")
                 #plt.show(block=False)
@@ -357,20 +437,26 @@ if __name__ == "__main__":
     test_dice = f1_score(tp=test_tp, fp=test_fp, fn=test_fn, tn=test_tn).item()
     test_iou = iou_score(tp=test_tp, fp=test_fp, fn=test_fn, tn=test_tn).item()
 
-    print("-" * 20 + " Test Results " + "-" * 20)
+    print("-" * 20 + " Test Results (Best Model) " + "-" * 20)
     print(f"Average Test Dice: {test_dice:.4f}")
     print(f"Average Test IoU: {test_iou:.4f}")
     print(f"Average Test Precision: {test_precision:.4f}")
     print(f"Average Test Recall: {test_recall:.4f}")
-    print("-" * 54)
+    print(f"Testováno s modelem uloženým v epoše: {np.argmin(valid_loss_hist) if best_val_loss != float('inf') else actual_epochs_trained -1}") # Ukazuje epochu nejlepšího modelu
+    print("-" * 62) # Upravena délka
 
-    # Uložení modelu
-    model_save_path = r"C:\Users\USER\Desktop\weights\unet_smp_e{}_len{}.pth".format(epochs, len(train_dataset))
+    # Uložení modelu - nyní ukládáme pouze nejlepší model během tréninku do best_model_path
+    # Můžeme zde přidat uložení finálního modelu (pokud nebyl early stopping), ale best_model_path
+    # by měl obsahovat ten relevantnější model pro evaluaci.
+    # Ponecháme informaci o uložení nejlepšího modelu výše.
+    model_save_path = r"C:\Users\USER\Desktop\weights\net_smp_final_e{}_len{}.pth".format(actual_epochs_trained, len(train_dataset))
     try:
         torch.save(net.state_dict(), model_save_path)
-        print(f"Model byl uložen do {model_save_path}")
+        print(f"Finální model (po tréninku) byl uložen do {model_save_path}")
     except Exception as save_err:
-        print(f"Chyba při ukládání modelu: {save_err}")
+        print(f"Chyba při ukládání finálního modelu: {save_err}")
+    print(f"Nejlepší model (podle validační loss) byl uložen během tréninku do: {best_model_path}")
+
 
     end = time.time()
     total_time = end - start
@@ -378,3 +464,4 @@ if __name__ == "__main__":
     print("Skript dokončen.")
 
 # --- END OF FILE train_smp_with_metrics.py ---
+# --- END OF FILE train_gemini.py ---
