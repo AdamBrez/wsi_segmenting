@@ -138,7 +138,7 @@ def calculate_iou(lbl:torch.Tensor, output:torch.Tensor):
     # Return average IoU across the batch
     return np.mean(iou_scores) if iou_scores else 0.0
 
-def basic_transform(tile, mask):
+def basic_transform(tile, mask):  #context_image
 
     """
     Konstatnty jsou pro případ, že se jako enkóder využívá typ,
@@ -151,9 +151,12 @@ def basic_transform(tile, mask):
     image = TF.to_tensor(tile)
     image = TF.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
+    # context_image = TF.to_tensor(context_image)
+    # context_image = TF.normalize(context_image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
+
     mask = TF.to_tensor(mask)
 
-    return image, mask
+    return image, mask #context_image
 
 def focal_loss(pred, target, gamma=2.0, alpha=0.25):
     bce = F.binary_cross_entropy(pred, target, reduction='none')

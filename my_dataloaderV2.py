@@ -10,22 +10,28 @@ from torchvision.transforms import functional as TF
 
 """
     V tomto skriptu mám vytvořený custom dataset, který používám pro načítání dlaždic do sítě.
+    Vytváří bounding box okolo tkáně a poté náhodně vybírá dlaždice uvnitř této oblasti.
+    Tím může dojít k vybrání dlaždice z ajkéhokoliv místa v rámci tkáně.
+    Při aplikaci u učení došlo k tomu, že se model naučil segmentovat zdravou tkáň místo nádorové tkáně.
+    Také trénink trval dost dlouho, průměrný batch se načítal 2.4s.
 """
 
 class WSITileDataset(Dataset):
-    def __init__(self, wsi_paths, tissue_mask_paths, mask_paths, tile_size=256, augmentations=None, min_foreground_ratio=0.05):
+    def __init__(self, wsi_paths, tissue_mask_paths, mask_paths, lowres_gt_masks, tile_size=256, augmentations=None, min_foreground_ratio=0.05):
         self.wsi_paths = wsi_paths
         self.tissue_mask_paths = tissue_mask_paths  # Cesty k maskám tkáně (.npy)
         self.mask_paths = mask_paths
+        self.lowres_gt_masks = lowres_gt_masks
         self.tile_size = tile_size
         self.augmentations = augmentations
         self.min_foreground_ratio = min_foreground_ratio  # Minimální podíl tkáně
+
 
         # Načteme masky tkáně
         # self.tissue_masks = [np.load(path) for path in self.tissue_mask_paths]
 
     def __len__(self):
-        return 19840  # Počet dlaždic na epochu
+        return 9920  # Počet dlaždic na epochu
 
     def __getitem__(self, idx):
         while True:
@@ -36,11 +42,12 @@ class WSITileDataset(Dataset):
             
             wsi = OpenSlide(self.wsi_paths[wsi_idx])
             mask = OpenSlide(self.mask_paths[wsi_idx])
-            if choice < 0.5:
+            if choice < 0.4:
                 tissue_mask = np.load(self.tissue_mask_paths[wsi_idx])
             else:
-                mask_np = np.array(mask.read_region(location=(0, 0), level=6, size=mask.level_dimensions[6]).convert("L"))
-                tissue_mask = (mask_np > 128).astype(np.uint8) * 255  # binarizace masky
+                # mask_np = np.array(mask.read_region(location=(0, 0), level=6, size=mask.level_dimensions[6]).convert("L"))
+                # tissue_mask = (mask_np > 128).astype(np.uint8) * 255  # binarizace masky
+                tissue_mask = np.load(self.lowres_gt_masks[wsi_idx])
             # Rozměry WSI a masky tkáně
             wsi_width, wsi_height = wsi.level_dimensions[wanted_level]
             native_width, native_height = wsi.level_dimensions[0]
@@ -99,11 +106,12 @@ class WSITileDataset(Dataset):
             # Ověříme, že dlaždice je v rámci WSI
             if x + self.tile_size <= wsi_width and y + self.tile_size <= wsi_height:
                 # Načtení dlaždice a odpovídající masky
+                print(f"Pro wsi: {self.wsi_paths[wsi_idx].split("\\")[-1]}: x: {x*int(native_to_wanted_x)}, y: {y*int(native_to_wanted_y)}")
                 tile = wsi.read_region((x*int(native_to_wanted_x), y*int(native_to_wanted_y)), wanted_level, (self.tile_size, self.tile_size)).convert("RGB")
                 mask_tile = mask.read_region((x*int(native_to_wanted_x), y*int(native_to_wanted_y)), wanted_level, (self.tile_size, self.tile_size)).convert("L")
                 mask_tile = np.array(mask_tile) > 128
                 mask_tile = Image.fromarray(mask_tile.astype(np.uint8) * 255, mode="L")
-                
+                #musím to předělávat na PIL image????
                 # Augmentace
                 if self.augmentations:
                     tile, mask_tile = self.augmentations(tile, mask_tile)
@@ -119,25 +127,37 @@ if __name__ == "__main__":
     from my_augmentation import MyAugmentations
 
     wsi_paths_train = [
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_001.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_002.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_003.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_089.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\tumor_001.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\tumor_002.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\tumor_003.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\tumor_089.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\tumor_017.tif",
     ]
 
     mask_paths_train = [
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_001.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_002.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_003.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_089.tif"
+    r"C:\Users\USER\Desktop\wsi_dir\mask_001.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\mask_002.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\mask_003.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\mask_089.tif",
+    r"C:\Users\USER\Desktop\wsi_dir\mask_017.tif",
     ]
 
     tissue_mask_paths_train = [
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_001.npy",
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_002.npy",
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_003.npy",
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_089.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_healthy\mask_001.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_healthy\mask_002.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_healthy\mask_003.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_healthy\mask_089.npy",
+    r"C:\Users\USER\Desktop\colab_unet\masky_healthy\mask_017.npy",
     ]
+
+    lowres_gt_masks_train = [
+    r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky\mask_001_cancer.npy",
+    r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky\mask_002_cancer.npy",
+    r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky\mask_003_cancer.npy",
+    r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky\mask_089_cancer.npy",
+    r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky\mask_017_cancer.npy",
+    ]
+
     color_jitter_params = {
         "brightness": 0.2,
         "contrast": 0.2,
@@ -152,7 +172,7 @@ if __name__ == "__main__":
         std=(0.5, 0.5, 0.5)
     )
 
-    dataset = WSITileDataset(wsi_paths_train, tissue_mask_paths_train, mask_paths_train, augmentations=None)
+    dataset = WSITileDataset(wsi_paths_train, tissue_mask_paths_train, mask_paths_train, lowres_gt_masks_train, augmentations=None)
     trainloader = DataLoader(dataset, batch_size=4, shuffle=True)
     images, labels = next(iter(trainloader))
     

@@ -11,12 +11,10 @@ import openslide
     x: číslo WSI, pro které chceme vytvořit masku
 """
 # x = 15
-for x in range(89,90):
+for x in range(10,100):
     # Cesta k WSI
-    if x == 90:
-        continue
-    slide_path = r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_0"+f"{x}"+".tif"
-    mask_path = r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_0"+f"{x}"+".tif"
+    slide_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_0"+f"{x}"+".tif"
+    mask_path = r"C:\Users\USER\Desktop\wsi_dir\mask_0"+f"{x}"+".tif"
     a = slide_path.split("\\")[-1]
     print(f"Zpracovává se wsi č.: {a}")
     # Otevřeme slide
@@ -67,66 +65,66 @@ for x in range(89,90):
     healthy_tissue_mask = cv2.morphologyEx(healthy_tissue_mask, cv2.MORPH_CLOSE, kernel)
 
     # Uložení masky zdravé tkáně
-    # output_path = r"C:\Users\USER\Desktop\colab_unet\masky_healthy\mask_0"+f"{x}"+".npy"
-    # os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    # np.save(output_path, healthy_tissue_mask)
-    # print(f"Maska zdravé tkáně byla uložena do {output_path}")
+    output_path = r"C:\Users\USER\Desktop\colab_unet\masky_healthy\mask_0"+f"{x}"+".npy"
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    np.save(output_path, healthy_tissue_mask)
+    print(f"Maska zdravé tkáně byla uložena do {output_path}")
 
     ####################################################################################################
     ############################## vizualizace překrytí masek ##########################################
     ####################################################################################################
 
-    import matplotlib.patches as mpatches
+    # import matplotlib.patches as mpatches
 
-    plt.figure(figsize=(15, 10))
+    # plt.figure(figsize=(12, 8))
 
-    # Původní obrázek
-    plt.subplot(2, 2, 1)
-    plt.imshow(image)
-    plt.axis("off")
-    plt.title("Původní obrázek")
+    # # Původní obrázek
+    # plt.subplot(2, 2, 1)
+    # plt.imshow(image)
+    # plt.axis("off")
+    # plt.title("Původní obrázek")
 
-    # Maska celkové tkáně
-    plt.subplot(2, 2, 2)
-    plt.imshow(tissue_mask, cmap="Blues")
-    plt.axis("off")
-    plt.title("Celková maska tkáně")
+    # # Maska celkové tkáně
+    # plt.subplot(2, 2, 2)
+    # plt.imshow(tissue_mask, cmap="Blues")
+    # plt.axis("off")
+    # plt.title("Celková maska tkáně")
 
-    # Maska nádorové tkáně
-    plt.subplot(2, 2, 3)
-    plt.imshow(mask_thumb_np, cmap="Reds")
-    plt.axis("off")
-    plt.title("Maska nádorové tkáně")
+    # # Maska nádorové tkáně
+    # plt.subplot(2, 2, 3)
+    # plt.imshow(mask_thumb_np, cmap="Reds")
+    # plt.axis("off")
+    # plt.title("Maska nádorové tkáně")
 
-    # Maska zdravé tkáně
-    plt.subplot(2, 2, 4)
-    plt.imshow(healthy_tissue_mask, cmap="Greens")
-    plt.axis("off")
-    plt.title("Maska zdravé tkáně")
+    # # Maska zdravé tkáně
+    # plt.subplot(2, 2, 4)
+    # plt.imshow(healthy_tissue_mask, cmap="Greens")
+    # plt.axis("off")
+    # plt.title("Maska zdravé tkáně")
 
-    plt.tight_layout()
+    # plt.tight_layout()
 
-    # Druhý graf s překrytím
-    plt.figure(figsize=(12, 8))
+    # # Druhý graf s překrytím
+    # plt.figure(figsize=(12, 8))
 
-    # Kompozitní vizualizace s barevným kódováním
-    overlay = np.zeros((tissue_mask.shape[0], tissue_mask.shape[1], 3), dtype=np.uint8)
-    overlay[tissue_mask > 0] = [0, 0, 255]  # Modrá pro celkovou tkáň
-    overlay[mask_thumb_np > 0] = [255, 0, 0]  # Červená pro nádorovou tkáň
-    overlay[healthy_tissue_mask > 0] = [0, 255, 0]  # Zelená pro zdravou tkáň
+    # # Kompozitní vizualizace s barevným kódováním
+    # overlay = np.zeros((tissue_mask.shape[0], tissue_mask.shape[1], 3), dtype=np.uint8)
+    # overlay[tissue_mask > 0] = [0, 0, 255]  # Modrá pro celkovou tkáň
+    # overlay[mask_thumb_np > 0] = [255, 0, 0]  # Červená pro nádorovou tkáň
+    # overlay[healthy_tissue_mask > 0] = [0, 255, 0]  # Zelená pro zdravou tkáň
 
-    plt.imshow(image)
-    plt.imshow(overlay, alpha=0.5)
-    plt.axis("off")
-    plt.title("Barevná vizualizace jednotlivých typů tkání")
+    # plt.imshow(image)
+    # plt.imshow(overlay, alpha=0.5)
+    # plt.axis("off")
+    # plt.title("Barevná vizualizace jednotlivých typů tkání")
 
-    # Přidání legendy
-    blue_patch = mpatches.Patch(color='blue', label='Celková tkáň')
-    red_patch = mpatches.Patch(color='red', label='Nádorová tkáň')
-    green_patch = mpatches.Patch(color='green', label='Zdravá tkáň')
-    plt.legend(handles=[blue_patch, red_patch, green_patch], 
-            loc='upper right', bbox_to_anchor=(1.05, 1),
-            frameon=True, facecolor='white', framealpha=0.8)
+    # # Přidání legendy
+    # # blue_patch = mpatches.Patch(color='blue', label='Celková tkáň')
+    # red_patch = mpatches.Patch(color='red', label='Nádorová tkáň')
+    # green_patch = mpatches.Patch(color='green', label='Zdravá tkáň')
+    # plt.legend(handles=[red_patch, green_patch], 
+    #         loc='upper right', bbox_to_anchor=(1.05, 1),
+    #         frameon=True, facecolor='white', framealpha=0.8)
 
-    plt.tight_layout()
-    plt.show()
+    # plt.tight_layout()
+    # plt.show()

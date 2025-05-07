@@ -7,7 +7,7 @@ from random import randint
 import numpy as np
 from openslide import OpenSlide
 from torchvision.transforms import functional as TF
-import time
+
 """
     V tomto skriptu mám vytvořený custom dataset, který používám pro načítání dlaždic do sítě.
 """
@@ -25,7 +25,7 @@ class WSITileDataset(Dataset):
         # self.tissue_masks = [np.load(path) for path in self.tissue_mask_paths]
 
     def __len__(self):
-        return 320  # Počet dlaždic na epochu
+        return 19840  # Počet dlaždic na epochu
 
     def __getitem__(self, idx):
         while True:
@@ -37,7 +37,7 @@ class WSITileDataset(Dataset):
             mask = OpenSlide(self.mask_paths[wsi_idx])
             tissue_mask = self.tissue_mask_paths[wsi_idx]
             tissue_mask = np.load(tissue_mask)
-            print(f"Načítám dlaždici z {self.wsi_paths[wsi_idx].split("\\")[-1]} a masku z {self.mask_paths[wsi_idx].split("\\")[-1]} s pomocí {self.tissue_mask_paths[wsi_idx].split("\\")[-1]}")
+            # print(f"Načítám dlaždici z {self.wsi_paths[wsi_idx].split("\\")[-1]} a masku z {self.mask_paths[wsi_idx].split("\\")[-1]} s pomocí {self.tissue_mask_paths[wsi_idx].split("\\")[-1]}")
 
             # Rozměry WSI a masky tkáně
             wsi_width, wsi_height = wsi.level_dimensions[wanted_level]  #<-- změna dimenze (rozlišení) 
@@ -62,7 +62,7 @@ class WSITileDataset(Dataset):
                 tile = wsi.read_region((x*int(native_to_wanted_x), y*int(native_to_wanted_y)), wanted_level, (self.tile_size, self.tile_size)).convert("RGB")
                 mask_tile = mask.read_region((x*int(native_to_wanted_x), y*int(native_to_wanted_y)), wanted_level, (self.tile_size, self.tile_size)).convert("L")
                 mask_tile = np.array(mask_tile) > 128
-                mask_tile = Image.fromarray(mask_tile.astype(np.uint8) * 255, mode="L")  # mode "L" nechá masku jako 8bitvou grayscale není binární
+                mask_tile = Image.fromarray(mask_tile.astype(np.uint8) * 255, mode="L")  # mode "L" nechá masku jako 8bitvou grayscale není binární / možná bych mohl dát bool do astype
 
                 # Augmentace
                 if self.augmentations:

@@ -8,7 +8,7 @@ from tqdm import tqdm
 import h5py
 import openslide
 from openslide.deepzoom import DeepZoomGenerator
-
+import torchvision.transforms as T
 import time
 import segmentation_models_pytorch as smp
 """
@@ -16,13 +16,12 @@ import segmentation_models_pytorch as smp
     Výstupem je binární maska, která je ukládána do HDF5 souboru.
     Datový typ v HDF5 souboru je boolean, což umožňuje úsporu místa.
     Není zde překryv.
-    Skript běžel 739.58 sekudn u WSI - tumor_091.tif
 """
 
 # # Cesta k modelu a obrázkům
-model_weights_path = r"C:\Users\USER\Desktop\weights\unet_smp_e100_9920lenV2.pth"
-wsi_image_path = r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_089.tif"  # Cesta k WSI obrazu
-output_hdf5_path = r"C:\Users\USER\Desktop\test_output\mask089V2.h5"
+model_weights_path = r"C:\Users\USER\Desktop\weights\unet_smp_e50_9920len.pth"
+wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_089.tif"  # Cesta k WSI obrazu
+output_hdf5_path = r"C:\Users\USER\Desktop\test_output\mask089gemini.h5"
 tile_size = 256 
 overlap = 0  
 threshold = 0.5
@@ -49,6 +48,11 @@ level_dimensions = deepzoom.level_dimensions[level]
 print(level_dimensions[::-1])
 print(f"Rozměry WSI na úrovni: {level} jsou: {level_dimensions} a počet dlaždic je: {deepzoom.level_tiles[level]}")
 
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+# Vytvoření transformace pro normalizaci
+
+
 # Vytvoření HDF5 souboru pro ukládání masek
 with h5py.File(output_hdf5_path, "w") as hdf5_file:
     # Vytvoření datasetu pro masku
@@ -71,7 +75,7 @@ with h5py.File(output_hdf5_path, "w") as hdf5_file:
             tile_tensor = ToTensor()(tile).unsqueeze(0).to(device) # to unsqueeze(0) přidá dimenzi pro batch size
 
             # # Inferování s modelem
-            with torch.no_grad():
+            with torch.inference_mode():
                 prediction = model(tile_tensor)
                 prediction = torch.sigmoid(prediction).squeeze().cpu().numpy()
 

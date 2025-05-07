@@ -2,3 +2,7 @@ __pycache__/
 notes.txt
 help.py
 bak_sources/
+pyvips_reconstruction.py
+dask_show.py
+evaluate_mask.py
+my_dataloader.py

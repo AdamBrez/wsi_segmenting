@@ -38,7 +38,8 @@ class WSITileDatasetBalanced(Dataset):
                  wanted_level=2,        # Level WSI, ze kterého čteme dlaždice
                  augmentations=None,    # Objekt s augmentacemi
                  positive_sampling_prob=0.7, # Pravděpodobnost pokusu o výběr dlaždice s karcinomem
-                 min_cancer_ratio_in_tile=0.05 # Minimální podíl karcinomu v dlaždici při pozitivním samplingu (0 pro vypnutí)
+                 min_cancer_ratio_in_tile=0.05,
+                 dataset_len=11200 # Minimální podíl karcinomu v dlaždici při pozitivním samplingu (0 pro vypnutí)
                  ):
         self.wsi_paths = wsi_paths
         self.tissue_mask_paths = tissue_mask_paths
@@ -49,6 +50,7 @@ class WSITileDatasetBalanced(Dataset):
         self.augmentations = augmentations
         self.positive_sampling_prob = positive_sampling_prob
         self.min_cancer_ratio_in_tile = min_cancer_ratio_in_tile
+        self.dataset_len = dataset_len # Počet dlaždic na epochu (upravte dle potřeby)
 
         # Ověření délky seznamů
         n = len(wsi_paths)
@@ -65,7 +67,7 @@ class WSITileDatasetBalanced(Dataset):
     def __len__(self):
         # Můžete nechat fixní, nebo lépe odhadnout
         # Např. počet WSI * průměrný počet dlaždic na WSI
-        return 11200  # Počet dlaždic na epochu (upravte dle potřeby)
+        return self.dataset_len  # Počet dlaždic na epochu (upravte dle potřeby)
 
     def __getitem__(self, idx):
         attempts = 0
@@ -96,6 +98,8 @@ class WSITileDatasetBalanced(Dataset):
                 attempt_positive_sampling = random.random() < self.positive_sampling_prob
 
                 # Najít souřadnice v nízkorozlišovacích maskách
+                # nešlo by přesunout až někde kde vím jakou masku beru?
+                # abych zbytečně nenačítal i tu druhou
                 cancer_y_low, cancer_x_low = np.where(gt_lowres_mask > 0)
                 tissue_y_low, tissue_x_low = np.where(tissue_mask_lowres > 0)
 
@@ -254,6 +258,7 @@ if __name__ == "__main__":
     # Předpokládáme existenci my_augmentation.py
     try:
         from my_augmentation import MyAugmentations
+        from my_augmentation import AlbumentationsAug
     except ImportError:
         print("Varování: my_augmentation.py nenalezen nebo neobsahuje MyAugmentations.")
         MyAugmentations = None # Definujeme jako None, pokud neexistuje
@@ -263,7 +268,7 @@ if __name__ == "__main__":
     # Základní cesty k WSI a GT maskám TIF
     wsi_dir = r"C:\Users\USER\Desktop\wsi_dir"
     # Předpoklad: názvy WSI a masek si odpovídají (tumor_XXX.tif, mask_XXX.tif)
-    wsi_ids = ["001", "002", "003", "089", "017"] # Přidejte ID vašich WSI
+    wsi_ids = ["017"] # Přidejte ID vašich WSI  "003", "089", "017"
     wsi_paths_train = [os.path.join(wsi_dir, f"tumor_{id}.tif") for id in wsi_ids]
     mask_paths_train = [os.path.join(wsi_dir, f"mask_{id}.tif") for id in wsi_ids]
 
@@ -280,13 +285,17 @@ if __name__ == "__main__":
     # --- Nastavení augmentací ---
     augmentations = None
     if MyAugmentations:
-        color_jitter_params = {"brightness": 0.2, "contrast": 0.2, "saturation": 0.2, "hue": 0.1}
+        IMAGENET_MEAN = (0.485, 0.456, 0.406) # Upravte podle potřeby
+        IMAGENET_STD = (0.229, 0.224, 0.225) # Upravte podle potřeby
+        color_jitter_params = {"brightness": 0.25, "contrast": 0.25, "saturation": 0.2, "hue": 0.05}
         augmentations = MyAugmentations(
             p_flip=0.5,
+            p_color=0.5,
             color_jitter_params=color_jitter_params,
-            mean=(0.5, 0.5, 0.5), # Upravte podle potřeby
-            std=(0.5, 0.5, 0.5)  # Upravte podle potřeby
+            mean=IMAGENET_MEAN, # Upravte podle potřeby
+            std=IMAGENET_STD  # Upravte podle potřeby
         )
+    albumentations_aug = AlbumentationsAug()
 
     # --- Vytvoření Datasetu a DataLoaderu ---
     print("\nVytváření datasetu...")
@@ -296,9 +305,9 @@ if __name__ == "__main__":
         mask_paths=mask_paths_train,
         gt_lowres_mask_paths=gt_lowres_mask_paths_train, # Přidáno
         tile_size=256,
-        wanted_level=1,
-        augmentations=None, # Použijeme definované augmentace
-        positive_sampling_prob=0.6,  # 70% šance na pokus o karcinom
+        wanted_level=2,
+        augmentations=albumentations_aug, # Použijeme definované augmentace
+        positive_sampling_prob=0.9,  # 70% šance na pokus o karcinom
         min_cancer_ratio_in_tile=0.05 # Vyžadovat alespoň 5% karcinomu v dlaždici při pozitivním samplingu
     )
 
@@ -313,7 +322,7 @@ if __name__ == "__main__":
         images, labels = next(iter(trainloader))
         end_time = time.time()
         print(f"První várka ({images.shape[0]} dlaždic) načtena za {end_time - start_time:.2f} sekund.")
-
+        
         print("Zobrazování obrázků...")
         fig, axes = plt.subplots(2, min(4, images.shape[0]), figsize=(12, 6))
         if images.shape[0] == 1: # Matplotlib subplot nevrací pole pro 1 sloupec
@@ -327,9 +336,12 @@ if __name__ == "__main__":
             img = images[i].permute(1, 2, 0).numpy()
             mask = labels[i].permute(1, 2, 0).squeeze().numpy() # squeeze() pro odstranění kanálové dimenze
 
-            # Denormalizace pro zobrazení (pokud jste normalizovali)
-            # Pokud používáte mean=0.5, std=0.5:
-            # img = img * 0.5 + 0.5
+                # Denormalizace pro ImageNet normalizaci
+            if augmentations:
+                mean = np.array(IMAGENET_MEAN).reshape(1, 1, 3)  # Shape (1,1,3)
+                std = np.array(IMAGENET_STD).reshape(1, 1, 3)    # Shape (1,1,3)
+                img = img * std + mean 
+
             img = np.clip(img, 0, 1) # Oříznout hodnoty pro jistotu
 
             axes[0, i].imshow(img)

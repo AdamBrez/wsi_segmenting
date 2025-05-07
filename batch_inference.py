@@ -28,18 +28,18 @@ import datetime
 import gc
 
 """
-    Načítá se celé WSI, je rozřezáváno BEZ PŘEKRYVU.
-    Inference je prováděna POUZE na dlaždicích překrývajících tkáň
+    - Načítá se celé WSI, je rozřezáváno BEZ PŘEKRYVU.
+    - Inference je prováděna POUZE na dlaždicích překrývajících tkáň
     podle nízko-rozlišovací masky (generované z WSI level 6).
-    Zpracování v DÁVKÁCH. Okrajové dlaždice jsou PADOVÁNY. Používá se normalizace.
-    Výstupem je binární maska (HDF5, bool), inicializovaná na False.
-    Metadata jsou zachována z původního skriptu.
+    - Zpracování v DÁVKÁCH. Okrajové dlaždice jsou PADOVÁNY. Používá se normalizace.
+    - Výstupem je binární maska (HDF5, bool), inicializovaná na False.
+    - Metadata jsou zachována z původního skriptu.
 """
 
 # --- Konfigurace ---
-model_weights_path = r"C:\Users\USER\Desktop\weights\unet_smp_e50_9920len.pth"
-wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_089.tif" # Zkontroluj cestu
-output_hdf5_path = r"C:\Users\USER\Desktop\test_output\pred_089_filtered_lvl6.h5" # Nový název!
+model_weights_path = r"C:\Users\USER\Desktop\weights\dice_loss_constant_lr_e50_11200len.pth"
+wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_064.tif" # Zkontroluj cestu
+output_hdf5_path = r"C:\Users\USER\Desktop\test_output\pred_064_aug_test.h5" # Nový název!
 
 # <<< Konfigurace pro filtrování podle masky tkáně >>>
 tissue_mask_dir = r"C:\Users\USER\Desktop\colab_unet\masky_new" # Adresář s .npy maskami
@@ -66,10 +66,12 @@ print(f"Model očekává vstup: {TILE_SIZE}x{TILE_SIZE}")
 model = smp.Unet("resnet34", encoder_weights=None, in_channels=3, classes=1)
 try:
     if not os.path.exists(model_weights_path): raise FileNotFoundError(f"Váhy nenalezeny: {model_weights_path}")
-    try: model.load_state_dict(torch.load(model_weights_path, map_location=device, weights_only=True))
-    except TypeError:
-         print("Varování: weights_only není podporováno, načítám standardně.")
-         model.load_state_dict(torch.load(model_weights_path, map_location=device))
+    try: 
+        model_and_weights = torch.load(model_weights_path, map_location=device, weights_only=True)
+        model.load_state_dict(model_and_weights["model_state_dict"])
+    except Exception as e:
+         print(f"Varování {e}: weights_only není podporováno, načítám standardně.")
+         model.load_state_dict(torch.load(model_weights_path, map_location=device, weights_only=True))
     print(f"Váhy modelu úspěšně načteny z: {model_weights_path}")
 except Exception as e: print(f"Chyba při načítání vah modelu: {e}"); exit()
 model.to(device)
@@ -94,7 +96,7 @@ try:
 
     # Načtení masky tkáně
     wsi_filename_base = os.path.splitext(os.path.basename(wsi_image_path))[0]
-    tissue_mask_filename = "mask_089.npy"#f"{wsi_filename_base}.npy"
+    tissue_mask_filename = "mask_064.npy"#f"{wsi_filename_base}.npy"
     tissue_mask_full_path = os.path.join(tissue_mask_dir, tissue_mask_filename)
     if not os.path.exists(tissue_mask_full_path):
         raise FileNotFoundError(f"Soubor s maskou tkáně nebyl nalezen: {tissue_mask_full_path}")

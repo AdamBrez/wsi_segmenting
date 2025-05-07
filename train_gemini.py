@@ -26,7 +26,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 # Odebrány importy vlastních metrik, nahrazeny smp
 # from my_functions import dice_coefficient, calculate_iou, basic_transform, dice_bce_loss
-from my_functions import basic_transform # Ponecháme loss a transformaci
+from my_functions import basic_transform, dice_bce_loss # Ponecháme loss a transformaci
 import segmentation_models_pytorch as smp
 # <<< Import smp metrik >>>
 from segmentation_models_pytorch.metrics import precision, recall, f1_score, iou_score, get_stats
@@ -174,7 +174,7 @@ if __name__ == "__main__":
     epochs_no_improve = 0 # Počítadlo epoch bez zlepšení
     early_stop = False # Flag pro signalizaci zastavení
     # Cesta pro uložení nejlepšího modelu podle validační ztráty
-    best_model_path = r"C:\Users\USER\Desktop\weights\net_smp_best_val_loss_e{}_len{}.pth".format(epochs, len(train_dataset))
+    best_model_path = r"C:\Users\USER\Desktop\weights\diceBCE_smp_best_val_loss_e{}_len{}.pth".format(epochs, len(train_dataset))
     # Zajistíme existenci adresáře pro váhy
     os.makedirs(os.path.dirname(best_model_path), exist_ok=True)
 
@@ -203,11 +203,11 @@ if __name__ == "__main__":
 
             # Forward pass
             output_logits = net(data) # Získat logits [B, 1, H, W]
-            loss = focal_loss(output_logits, lbl) # Loss pro logits
+            # loss = focal_loss(output_logits, lbl) # Loss pro logits
             output_probs = torch.sigmoid(output_logits) # Pravděpodobnosti [B, 1, H, W]
 
             # Výpočet loss (předpokládá logits jako vstup)
-            # loss = dice_bce_loss(output_probs, lbl) # Upravit dice_bce_loss, pokud očekává sigmoid výstup
+            loss = dice_bce_loss(output_probs, lbl) # Upravit dice_bce_loss, pokud očekává sigmoid výstup
 
             # Backward pass a optimalizace
             optimizer.zero_grad()
@@ -256,11 +256,11 @@ if __name__ == "__main__":
                 lbl = lbl.to(device) # Očekáváme float tensor [0, 1]
 
                 output_logits = net(data) # Logits [B, 1, H, W]
-                loss = focal_loss(output_logits, lbl) # Loss pro logits
+                # loss = focal_loss(output_logits, lbl) # Loss pro logits
                 output_probs = torch.sigmoid(output_logits) # Pravděpodobnosti [B, 1, H, W]
 
                 # Výpočet loss
-                # loss = dice_bce_loss(output_probs, lbl) # Upravit, pokud očekává sigmoid
+                loss = dice_bce_loss(output_probs, lbl) # Upravit, pokud očekává sigmoid
                 epoch_val_loss += loss.item()
 
                 # Výpočet statistik pro metriky
@@ -308,7 +308,7 @@ if __name__ == "__main__":
             break # Ukončení trénovací smyčky
 
         # Krok scheduleru
-        scheduler.step()
+        # scheduler.step()
         print(f"Current LR: {scheduler.get_last_lr()[0]}")
 
         # Výpis průměrných hodnot za celou dobu (každých 10 epoch) - Nyní používáme *_hist listy
@@ -365,7 +365,7 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid(True)
     # Uložení grafu
-    loss_plot_path = r'C:\Users\USER\Desktop\los_curve_unet_smp_stopped_e{}_len{}.png'.format(actual_epochs_trained, len(train_dataset))
+    loss_plot_path = r'C:\Users\USER\Desktop\diceBCE_curve_unet_smp_stopped_e{}_len{}.png'.format(actual_epochs_trained, len(train_dataset))
     plt.savefig(loss_plot_path)
     print(f"Graf loss uložena do: {loss_plot_path}")
     #plt.show(block=False) # Zobrazí neblokující okno
@@ -423,7 +423,7 @@ if __name__ == "__main__":
                 plt.imshow(lbl[0, 0, :, :].cpu().numpy(), cmap="gray") # Ground truth
                 plt.axis('off')
 
-                plot_save_path = r'C:\Users\USER\Desktop\est_sample_{}_stopped_e{}_len{}.png'.format(kk, actual_epochs_trained, len(train_dataset))
+                plot_save_path = r'C:\Users\USER\Desktop\diceBCE_sample_{}_stopped_e{}_len{}.png'.format(kk, actual_epochs_trained, len(train_dataset))
                 plt.savefig(plot_save_path)
                 print(f"Testovací obrázek {kk} uložen do: {plot_save_path}")
                 #plt.show(block=False)
@@ -449,7 +449,7 @@ if __name__ == "__main__":
     # Můžeme zde přidat uložení finálního modelu (pokud nebyl early stopping), ale best_model_path
     # by měl obsahovat ten relevantnější model pro evaluaci.
     # Ponecháme informaci o uložení nejlepšího modelu výše.
-    model_save_path = r"C:\Users\USER\Desktop\weights\net_smp_final_e{}_len{}.pth".format(actual_epochs_trained, len(train_dataset))
+    model_save_path = r"C:\Users\USER\Desktop\weights\diceBCE_smp_final_e{}_len{}.pth".format(actual_epochs_trained, len(train_dataset))
     try:
         torch.save(net.state_dict(), model_save_path)
         print(f"Finální model (po tréninku) byl uložen do {model_save_path}")

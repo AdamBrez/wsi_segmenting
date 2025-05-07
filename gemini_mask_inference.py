@@ -21,9 +21,9 @@ import torchvision.transforms as T
 """
 
 # # Cesta k modelu a obrázkům
-model_weights_path = r"C:\Users\USER\Desktop\weights\unet_smp_e50_9920len.pth" # Upraven název souboru podle trénovacího skriptu
+model_weights_path = r"C:\Users\USER\Desktop\weights\constant_lr_e50_11200len.pth" # Upraven název souboru podle trénovacího skriptu
 wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_068.tif"
-output_hdf5_path = r"C:\Users\USER\Desktop\test_output\mask068gemini_fixed.h5" # Změna názvu výstupního souboru
+output_hdf5_path = r"C:\Users\USER\Desktop\test_output\mask068gemini_constant_lr.h5" # Změna názvu výstupního souboru
 tile_size = 256
 overlap = 0
 threshold = 0.5
@@ -180,7 +180,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 
-hdf5_path = r"C:\Users\USER\Desktop\test_output\mask089gemini_fixed.h5" # Cesta k opravenému souboru
+hdf5_path = r"C:\Users\USER\Desktop\test_output\mask068gemini_constant_lr.h5" # Cesta k opravenému souboru
 
 with h5py.File(hdf5_path, "r") as f:
     mask = f["mask"][:] # Načte jako uint8 (0, 1)
