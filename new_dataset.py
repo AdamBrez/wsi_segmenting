@@ -19,6 +19,8 @@ import numpy as np
 from openslide import OpenSlide, OpenSlideError
 from torchvision.transforms import functional as TF
 import time # Pro měření času v __main__
+import torch
+
 
 """
     Tato verze zahrnuje:
@@ -39,7 +41,8 @@ class WSITileDatasetBalanced(Dataset):
                  augmentations=None,    # Objekt s augmentacemi
                  positive_sampling_prob=0.7, # Pravděpodobnost pokusu o výběr dlaždice s karcinomem
                  min_cancer_ratio_in_tile=0.05,
-                 dataset_len=11200 # Minimální podíl karcinomu v dlaždici při pozitivním samplingu (0 pro vypnutí)
+                 dataset_len=11200, # Minimální podíl karcinomu v dlaždici při pozitivním samplingu (0 pro vypnutí)
+                 crop=False # Pokud je True, dlaždice se ořízne na tile_size
                  ):
         self.wsi_paths = wsi_paths
         self.tissue_mask_paths = tissue_mask_paths
@@ -51,6 +54,7 @@ class WSITileDatasetBalanced(Dataset):
         self.positive_sampling_prob = positive_sampling_prob
         self.min_cancer_ratio_in_tile = min_cancer_ratio_in_tile
         self.dataset_len = dataset_len # Počet dlaždic na epochu (upravte dle potřeby)
+        self.crop = crop # Přidáno pro ořezávání dlaždic na tile_size
 
         # Ověření délky seznamů
         n = len(wsi_paths)
@@ -226,6 +230,9 @@ class WSITileDatasetBalanced(Dataset):
                     tile_tensor = TF.to_tensor(tile_pil) # Scales to [0, 1]
                     mask_tensor = TF.to_tensor(mask_pil_final) # Scales [0, 255] to [0, 1]
 
+                if self.crop:
+                    tile_tensor = TF.center_crop(tile_tensor, (256, 256))
+                    mask_tensor = TF.center_crop(mask_tensor, (256, 256))
                 # print(f"Úspěšně vrácena dlaždice z WSI {wsi_idx} (typ: {sampling_type})")
                 return tile_tensor, mask_tensor
 
@@ -259,6 +266,7 @@ if __name__ == "__main__":
     try:
         from my_augmentation import MyAugmentations
         from my_augmentation import AlbumentationsAug
+        from my_functions import basic_transform
     except ImportError:
         print("Varování: my_augmentation.py nenalezen nebo neobsahuje MyAugmentations.")
         MyAugmentations = None # Definujeme jako None, pokud neexistuje
@@ -268,7 +276,7 @@ if __name__ == "__main__":
     # Základní cesty k WSI a GT maskám TIF
     wsi_dir = r"C:\Users\USER\Desktop\wsi_dir"
     # Předpoklad: názvy WSI a masek si odpovídají (tumor_XXX.tif, mask_XXX.tif)
-    wsi_ids = ["017"] # Přidejte ID vašich WSI  "003", "089", "017"
+    wsi_ids = ["001"] # Přidejte ID vašich WSI  "003", "089", "017"
     wsi_paths_train = [os.path.join(wsi_dir, f"tumor_{id}.tif") for id in wsi_ids]
     mask_paths_train = [os.path.join(wsi_dir, f"mask_{id}.tif") for id in wsi_ids]
 
@@ -295,21 +303,24 @@ if __name__ == "__main__":
             mean=IMAGENET_MEAN, # Upravte podle potřeby
             std=IMAGENET_STD  # Upravte podle potřeby
         )
-    albumentations_aug = AlbumentationsAug()
+    albumentations_aug = AlbumentationsAug(
+        p_flip=0.0,
+        p_color=0.9,
+        p_elastic=0.0,
+        p_rotate90=0.0,
+        p_shiftscalerotate=0.0,
+        p_blur=0.0,
+        p_noise=0.0,
+        p_hestain=0.0,
+    )
 
     # --- Vytvoření Datasetu a DataLoaderu ---
     print("\nVytváření datasetu...")
-    dataset = WSITileDatasetBalanced(
-        wsi_paths=wsi_paths_train,
-        tissue_mask_paths=tissue_mask_paths_train,
-        mask_paths=mask_paths_train,
-        gt_lowres_mask_paths=gt_lowres_mask_paths_train, # Přidáno
-        tile_size=256,
-        wanted_level=2,
-        augmentations=albumentations_aug, # Použijeme definované augmentace
-        positive_sampling_prob=0.9,  # 70% šance na pokus o karcinom
-        min_cancer_ratio_in_tile=0.05 # Vyžadovat alespoň 5% karcinomu v dlaždici při pozitivním samplingu
-    )
+    dataset = WSITileDatasetBalanced(wsi_paths=wsi_paths_train, tissue_mask_paths=tissue_mask_paths_train,
+                                           mask_paths=mask_paths_train, gt_lowres_mask_paths=gt_lowres_mask_paths_train,
+                                           tile_size=400, wanted_level=2, positive_sampling_prob=0.9,
+                                           min_cancer_ratio_in_tile=0.01, augmentations=albumentations_aug,
+                                           dataset_len=7200, crop=True) # 7200 dlaždic na epochu (upravte podle potřeby)
 
     print("Vytváření DataLoaderu...")
     # Zvažte použití více workerů pro rychlejší načítání, pokud nemáte problémy s pamětí/DLL
@@ -322,7 +333,7 @@ if __name__ == "__main__":
         images, labels = next(iter(trainloader))
         end_time = time.time()
         print(f"První várka ({images.shape[0]} dlaždic) načtena za {end_time - start_time:.2f} sekund.")
-        
+        print(f"Rozměry obrázků: {images.shape}, Rozměry masek: {labels.shape}")
         print("Zobrazování obrázků...")
         fig, axes = plt.subplots(2, min(4, images.shape[0]), figsize=(12, 6))
         if images.shape[0] == 1: # Matplotlib subplot nevrací pole pro 1 sloupec
@@ -338,8 +349,8 @@ if __name__ == "__main__":
 
                 # Denormalizace pro ImageNet normalizaci
             if augmentations:
-                mean = np.array(IMAGENET_MEAN).reshape(1, 1, 3)  # Shape (1,1,3)
-                std = np.array(IMAGENET_STD).reshape(1, 1, 3)    # Shape (1,1,3)
+                mean = np.array((0.702, 0.546, 0.696)).reshape(1, 1, 3)  # Shape (1,1,3)
+                std = np.array((0.239, 0.282, 0.216)).reshape(1, 1, 3)    # Shape (1,1,3)
                 img = img * std + mean 
 
             img = np.clip(img, 0, 1) # Oříznout hodnoty pro jistotu
