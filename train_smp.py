@@ -49,10 +49,10 @@ if __name__ == "__main__":
     p_color=0.0,
     p_elastic=0.2,
     p_rotate90=0.3,
-    p_shiftscalerotate=0.4,
+    p_shiftscalerotate=0.5,
     p_blur=0.05,
     p_noise=0.1,
-    p_hestain=0.4
+    p_hestain=0.5
     )
     # albumentations_aug = AlbumentationsAug(
     # p_flip=0.4,
@@ -93,57 +93,48 @@ if __name__ == "__main__":
                                           dataset_len=72000)
     
     testloader = DataLoader(test_dataset,batch_size=batch, num_workers=2, shuffle=False)
-
+    
     # net = smp.DeepLabV3Plus(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
-    net = smp.Unet(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1, activation=None)
+    net = smp.Unet(encoder_name="resnet18", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
+    # net = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
     # net = UNet(spatial_dims=2, in_channels=3, out_channels=1, channels=(64, 128, 256, 512, 1024),
     #            strides=(2, 2, 2, 2), num_res_units=0, act="relu", norm="batch", dropout=0.0)
     net = net.to(device)
-    lr_start = 0.0005
-    optimizer = optim.AdamW(net.parameters(), lr=lr_start, weight_decay=5e-3) #weight_decay=1e-5
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50, 80], gamma=0.2)
+    lr_start = 0.001
+    optimizer = optim.AdamW(net.parameters(), lr=lr_start, weight_decay=1e-4) #weight_decay=1e-5
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50,80], gamma=0.1)
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=7, threshold=0.001, factor=0.2, min_lr=1e-6, cooldown=1)
     # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, steps_per_epoch=len(trainloader), epochs=epochs, max_lr=0.001, pct_start=0.3, div_factor=25, final_div_factor=1000)
     # early_stopping = EarlyStopping(patience=10, verbose=True, delta=0.001)
     loss_func = DiceLoss(mode="binary", from_logits=True, smooth=1e-6)
-    # focal_loss = FocalLoss(mode="binary", alpha=0.6, gamma=2.0)
-
-    checkpoint = torch.load(r"C:\Users\USER\Desktop\results\2025-05-12_12-11-18\best_weights_2025-05-12_12-11-18.pth", map_location=device, weights_only=False)
-
-    net.load_state_dict(checkpoint["model_state_dict"])
-    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        
+    # loss_func = FocalLoss(mode="binary", alpha=0.6, gamma=2.0)
+    
     n_epochs_avg = 5 
     best_val_dice = float("-inf")
     weights_patience = 0
-    min_impovement = 0.0001
+    min_impovement = 0.001
     current_date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     os.makedirs(rf"C:\Users\USER\Desktop\results\{current_date}", exist_ok=True)
 
-    smp_f1_train = checkpoint["train_dice"]
-    smp_f1_val = checkpoint["val_dice"]
+    smp_f1_train = []
+    smp_f1_val = []
 
-    smp_iou_train = checkpoint["train_iou"]
-    smp_iou_val = checkpoint["val_iou"]
+    smp_iou_train = []
+    smp_iou_val = []
 
-    smp_recall_train = checkpoint["train_recall"]
-    smp_recall_val = checkpoint["val_recall"]
+    smp_recall_train = []
+    smp_recall_val = []
     
-    smp_precision_train = checkpoint["train_precision"]
-    smp_precision_val = checkpoint["val_precision"]
+    smp_precision_train = []
+    smp_precision_val = []
 
-    train_loss_hist = checkpoint["train_loss"]
-    valid_loss_hist = checkpoint["valid_loss"]
+    train_loss_hist = []
+    valid_loss_hist = []
 
     batch_load_time = []
     lr_change_epochs = []
-    for _ in range(63):
-        scheduler.step()
-    current_lr = optimizer.param_groups[0]['lr']
-    print(f"Current learning rate: {current_lr}")
 
-
-    for epoch in range(63, epochs):
+    for epoch in range(epochs):
         start_epoch = time.time()
         print(f"Epoch {epoch}/{epochs-1}\n")
         if epoch >= 10 and epoch % 10 == 0:
@@ -246,7 +237,7 @@ if __name__ == "__main__":
         print("-"*30)
 
         # pridani vypoctu poslednich peti val dice pro stabilnejsi early stopping
-        if epoch >= 67:
+        if epoch >= 5:
             if len(smp_f1_val) > n_epochs_avg:
                 avg_val_dice = np.mean(smp_f1_val[-n_epochs_avg:])
             else:
@@ -354,12 +345,12 @@ if __name__ == "__main__":
     
     model_and_metadata = {
         "model": type(net).__name__,
-        "encoder": "restnet34",
+        "encoder": "restnet18",
         "epochs": epochs,
         "lr_start": lr_start, 
         "lr_end": optimizer.param_groups[0]['lr'],
         "lr_change_epochs": lr_change_epochs,
-        "scheduler": [type(scheduler).__name__, scheduler.milestones],
+        "scheduler": type(scheduler).__name__,
         "optimizer": type(optimizer).__name__,
         "batch_size": batch,
         "train_dataset_len": vars(train_dataset)["dataset_len"],
@@ -382,10 +373,9 @@ if __name__ == "__main__":
         "train_loss_hist": train_loss_hist,
         "valid_loss_hist": valid_loss_hist,
         "runtime": end - start,
-        "info": (f"Trénování na smp Unetu bez předtrénovaných váh,"
-                 "scheduler byl použit (multistep [50,80]). "
-                 "Augmentace byly pokročilé pomocí albumentations."
-                 "weight decay 5e-3."),
+        "info": (f"Trénování na smp Unetu s předtrénovanými váhy,"
+                 "scheduler byl použit (multistep[50,80]). "
+                 "Augmentace pokorcile. WD 1e-4"),
     }
     # Uložení váh modelu
     torch.save(model_and_metadata, model_save_path)
