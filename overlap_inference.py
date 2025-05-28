@@ -28,6 +28,9 @@ import datetime
 import math
 import gc
 
+from model import UNet  # Ujistěte se, že máte správnou cestu k vlastnímu modelu
+# from aug_norm import AlbumentationsAugForStain, StainNormalizingAugmentationsTorchStain
+
 """
     Načítá WSI a provádí inferenci s MANUÁLNĚ ŘÍZENÝM PŘEKRYVEM.
     Nepoužívá DeepZoomGenerator pro tvorbu dlaždic.
@@ -38,11 +41,21 @@ import gc
     Predikce z překryvů jsou zprůměrovány pomocí akumulačních polí.
     Výstupem je finální binární maska (HDF5, bool).
 """
+# SOUBOR: aug_norm.py (finální verze pro trénink i inferenci)
+
+import cv2
+import numpy as np
+import albumentations as A
+import torch
+import torchstain
+from torchvision import transforms
+from PIL import Image
+
 
 # --- Konfigurace ---
-model_weights_path = r"C:\Users\USER\Desktop\weights\finetuned_e20_11200len.pth"
-wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_068.tif"
-output_hdf5_path = r"C:\Users\USER\Desktop\test_output\pred_068_finetuned_overlap.h5" # Nový název!
+model_weights_path = r"C:\Users\USER\Desktop\results\2025-05-23_01-36-24\final_weights_2025-05-23_01-36-24.pth"
+wsi_image_path = r"F:\wsi_dir_test\test_040.tif"
+output_hdf5_path = r"C:\Users\USER\Desktop\test_preds\vanilla_unet\pred_040.h5" # Nový název!
 
 # <<< Konfigurace manuálního overlapu >>>
 TILE_SIZE = 256     # Velikost, kterou očekává model
@@ -52,13 +65,35 @@ if STEP <= 0: raise ValueError("Krok (TILE_SIZE - OVERLAP_PX) musí být pozitiv
 print(f"Manuální overlap: Tile Size = {TILE_SIZE}, Overlap = {OVERLAP_PX}, Step = {STEP}")
 # <<< Konec Konfigurace manuálního overlapu >>>
 
-# <<< Konfigurace filtrování podle masky tkáně >>>
-tissue_mask_dir = r"C:\Users\USER\Desktop\colab_unet\masky_new"
+# <<< Konfigurace filtrování podle masky tkáně >>> colab_unet\masky_new
+tissue_mask_dir = r"C:\Users\USER\Desktop\colab_unet\test_lowres_masky"
 tissue_mask_level_index = 6 # Úroveň OpenSlide, ze které byla maska generována
 TISSUE_THRESHOLD = 0.1 # Minimální podíl tkáně
 # <<< Konec Konfigurace pro filtrování >>>
 
-BATCH_SIZE = 32 # Možná bude potřeba snížit kvůli akumulačním polím v RAM
+
+# Změna zde: Kontrolujeme dostupnost nové třídy
+# if AlbumentationsAugForStain and StainNormalizingAugmentationsTorchStain:
+#     # 1. Vytvoříme instanci základních augmentací (bez normalizace a to_tensor)
+#     albumentations_basic = AlbumentationsAugForStain(
+#         p_flip=0.0, p_color=0.0, p_elastic=0.0, p_rotate90=0.0,
+#         p_shiftscalerotate=0.0, p_blur=0.0, p_noise=0.0, p_hestain=0.0
+#     )
+
+#     # 2. Vytvoříme obalující třídu, která přidá TORCHSTAIN normalizaci
+#     try:
+#         print("\n--- Vytváření augmentačního pipeline s TorchStain ---")
+#         final_augmentations = StainNormalizingAugmentationsTorchStain(
+#             stain_target_image_path=PATH_TO_STAIN_TARGET_IMAGE,
+#             albumentations_aug=albumentations_basic
+#         )
+#     except FileNotFoundError:
+#         print(f"CHYBA: Referenční obrázek pro normalizaci barvení nebyl nalezen na cestě: {PATH_TO_STAIN_TARGET_IMAGE}")
+#         final_augmentations = None
+    
+# else:
+#     print("Třídy pro augmentaci nejsou dostupné, augmentace nebudou použity.")
+BATCH_SIZE = 64 # Možná bude potřeba snížit kvůli akumulačním polím v RAM
 THRESHOLD = 0.5 # Práh pro finální binární masku
 TARGET_INFERENCE_LEVEL = 2 # Přímo index OpenSlide úrovně pro inferenci (0 = nejvyšší)
 
@@ -69,11 +104,15 @@ print(f"Používám zařízení: {device}")
 print(f"Model očekává vstup: {TILE_SIZE}x{TILE_SIZE}")
 
 # Načtení modelu
+
 model = smp.Unet("resnet34", encoder_weights=None, in_channels=3, classes=1)
+# model = UNet(spatial_dims=2, in_channels=3, out_channels=1, channels=(64, 128, 256, 512, 1024),
+#             strides=(2, 2, 2, 2), num_res_units=0, act="relu", norm="batch", dropout=0.0)
+# model = UNet(n_channels=3, n_classes=1)
 try:
     if not os.path.exists(model_weights_path): raise FileNotFoundError(f"Váhy nenalezeny: {model_weights_path}")
     try: 
-        model_and_weights = torch.load(model_weights_path, map_location=device, weights_only=True)
+        model_and_weights = torch.load(model_weights_path, map_location=device, weights_only=False)
         model.load_state_dict(model_and_weights["model_state_dict"])
     except Exception as e:
          print(f"Varování {e}: weights_only není podporováno, načítám standardně.")
@@ -84,6 +123,12 @@ model.to(device)
 model.eval()
 
 # Normalizační transformace
+#imagenet
+#  mean=(0.485, 0.456, 0.406),
+# std=(0.229, 0.224, 0.225),
+#patchcamelyon
+# mean=[0.702, 0.546, 0.696]
+# std=[0.239, 0.282, 0.216]
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 # Načtení WSI, masky a inicializace
@@ -115,7 +160,9 @@ try:
 
     # Načtení masky tkáně
     wsi_filename_base = os.path.splitext(os.path.basename(wsi_image_path))[0]
-    tissue_mask_filename = "mask_068.npy" # Pevně nastaveno, jak bylo v předchozím kódu
+    wsi_number = wsi_image_path.split("\\")[-1].split(".")[0].split("_")[-1] # Získání čísla WSI
+    # print(f"Číslo WSI: {wsi_number}")
+    tissue_mask_filename = f"mask_{wsi_number}.npy" # Změněno na číslo WSI
     tissue_mask_full_path = os.path.join(tissue_mask_dir, tissue_mask_filename)
     if not os.path.exists(tissue_mask_full_path):
         raise FileNotFoundError(f"Soubor s maskou tkáně nebyl nalezen: {tissue_mask_full_path}")
@@ -206,7 +253,11 @@ try:
                         tile_tensor = to_tensor(tile_to_process)
                         tile_tensor_normalized = normalize(tile_tensor)
 
-                        batch_tiles_data.append(tile_tensor_normalized)
+                        # Použití augmentací, pokud jsou dostupné
+                        # if final_augmentations:
+                        #     tile_tensor = final_augmentations(tile_to_process)
+
+                        batch_tiles_data.append(tile_tensor_normalized) # Přidáme tensor do dávky
                         # Ukládáme souřadnice na inference úrovni (x_inf, y_inf) a
                         # SKUTEČNOU velikost načtené dlaždice PŘED paddingem (tile_w_orig, tile_h_orig)
                         batch_coords.append({'x_inf': x_inf_start, 'y_inf': y_inf_start,
