@@ -38,8 +38,8 @@ import gc
 
 # --- Konfigurace ---
 model_weights_path = r"C:\Users\USER\Desktop\weights\dice_loss_constant_lr_e50_11200len.pth"
-wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_064.tif" # Zkontroluj cestu
-output_hdf5_path = r"C:\Users\USER\Desktop\test_output\pred_064_aug_test.h5" # Nový název!
+wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_068.tif" # Zkontroluj cestu
+output_hdf5_path = r"C:\Users\USER\Desktop\test_output\nooverlap.h5" # Nový název!
 
 # <<< Konfigurace pro filtrování podle masky tkáně >>>
 tissue_mask_dir = r"C:\Users\USER\Desktop\colab_unet\masky_new" # Adresář s .npy maskami
@@ -96,7 +96,7 @@ try:
 
     # Načtení masky tkáně
     wsi_filename_base = os.path.splitext(os.path.basename(wsi_image_path))[0]
-    tissue_mask_filename = "mask_064.npy"#f"{wsi_filename_base}.npy"
+    tissue_mask_filename = "mask_068.npy"#f"{wsi_filename_base}.npy"
     tissue_mask_full_path = os.path.join(tissue_mask_dir, tissue_mask_filename)
     if not os.path.exists(tissue_mask_full_path):
         raise FileNotFoundError(f"Soubor s maskou tkáně nebyl nalezen: {tissue_mask_full_path}")

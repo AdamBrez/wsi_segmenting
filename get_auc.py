@@ -20,6 +20,7 @@ import gc
 from sklearn.metrics import roc_auc_score, roc_curve
 import matplotlib.pyplot as plt
 import glob
+from model import UNet
 
 # =================================================================================
 # --- HLAVNÍ KONFIGURACE ---
@@ -27,27 +28,32 @@ import glob
 
 # --- CESTY K ADRESÁŘŮM A SOUBORŮM ---
 # Adresář, kde jsou společně uloženy `tumor_XXX.tif` a `mask_XXX.tif`
-DATA_DIR = r"C:\Users\USER\Desktop\wsi_dir"
+DATA_DIR = r"F:\wsi_dir_test"
 # Adresář, kde jsou uloženy nízko-rozlišovací .npy masky celé tkáně
-TISSUE_MASK_DIR = r"C:\Users\USER\Desktop\colab_unet\masky_new"
+TISSUE_MASK_DIR = r"C:\Users\USER\Desktop\colab_unet\test_lowres_masky"
 # Adresář, kam se uloží finální grafy a výsledky
-OUTPUT_DIR = r"C:\Users\USER\Desktop"
+OUTPUT_DIR = r"C:\Users\USER\Desktop\model_auc"
 # Cesta k naučeným vahám modelu
-MODEL_WEIGHTS_PATH = r"C:\Users\USER\Desktop\results\2025-05-23_01-36-24\best_weights_2025-05-23_01-36-24.pth"
+MODEL_WEIGHTS_PATH = r"C:\Users\USER\Desktop\results\2025-05-24_00-11-56\best_weights_2025-05-24_00-11-56.pth"
 
 # --- PARAMETRY ZPRACOVÁNÍ ---
 TILE_SIZE = 256
-BATCH_SIZE = 64
+BATCH_SIZE = 24
 TARGET_LEVEL_OFFSET = 2  # Cílová úroveň DZG (0 = nejvyšší rozlišení, 2 = 4x menší)
-TISSUE_THRESHOLD = 0.1   # Min. podíl tkáně v dlaždici pro zpracování (0.0 až 1.0)
+TISSUE_THRESHOLD = 0.05   # Min. podíl tkáně v dlaždici pro zpracování (0.0 až 1.0)
 TISSUE_MASK_LEVEL_INDEX = 6 # OpenSlide úroveň, ze které byla .npy maska tkáně vytvořena
+
+PATCH_CAMELYON_MEAN = [0.702, 0.546, 0.696]
+PATCH_CAMELYON_STD = [0.239, 0.282, 0.216]
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
 
 # --- PARAMETRY PRO VÝPOČET A TESTOVÁNÍ ---
 # Kolik pixelů (v procentech) použít z každého WSI pro finální agregovaný graf.
 # Šetří RAM při velkých datasetech. 1.0 = všechny, 0.02 = 2% vzorek.
 SAMPLE_FRACTION = 0.02
 # Omezí počet WSI snímků pro rychlé testování. Nastavte na None pro zpracování všech.
-LIMIT_WSI_COUNT = 5  # Např. 10 pro test, None pro plný běh
+LIMIT_WSI_COUNT = None  # Např. 10 pro test, None pro plný běh
 
 # =================================================================================
 # --- FUNKCE PRO ZPRACOVÁNÍ JEDNOHO WSI ---
@@ -85,7 +91,7 @@ def process_single_wsi(wsi_path, gt_mask_path, tissue_mask_path, model, device, 
         level_tiles_cols, level_tiles_rows = deepzoom.level_tiles[dzg_level_index]
         
         batch_tiles_data, batch_masks_data, batch_coords = [], [], []
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
         
         with torch.inference_mode():
             for row in range(level_tiles_rows):
@@ -175,9 +181,12 @@ if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Používám zařízení: {device}")
-
+    
     try:
-        model = smp.Unet("resnet34", encoder_weights=None, in_channels=3, classes=1)
+        # model = smp.Unet("resnet34", encoder_weights=None, in_channels=3, classes=1)
+        # model = UNet(n_channels=3, n_classes=1)
+        # model = smp.DeepLabV3Plus(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1)
+        model = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1)
         weights_and_data = torch.load(MODEL_WEIGHTS_PATH, map_location=device, weights_only=False)
         model.load_state_dict(weights_and_data['model_state_dict'])
         model.to(device)
@@ -187,9 +196,9 @@ if __name__ == "__main__":
         print(f"Chyba při načítání modelu: {e}")
         exit()
 
-    wsi_files = sorted(glob.glob(os.path.join(DATA_DIR, "tumor_*.tif")))
+    wsi_files = sorted(glob.glob(os.path.join(DATA_DIR, "test_*.tif")))
     if not wsi_files:
-        print(f"V adresáři {DATA_DIR} nebyly nalezeny žádné 'tumor_*.tif' soubory.")
+        print(f"V adresáři {DATA_DIR} nebyly nalezeny žádné 'test_*.tif' soubory.")
         exit()
     
     if LIMIT_WSI_COUNT is not None and LIMIT_WSI_COUNT > 0:
@@ -202,8 +211,8 @@ if __name__ == "__main__":
     
     for wsi_path in tqdm(wsi_files, desc="Zpracovávám WSI sadu"):
         basename = os.path.basename(wsi_path)
-        gt_mask_path = os.path.join(DATA_DIR, basename.replace("tumor", "mask"))
-        npy_basename = basename.replace("tumor", "mask").replace(".tif", ".npy")
+        gt_mask_path = os.path.join(DATA_DIR, basename.replace("test", "mask"))
+        npy_basename = basename.replace("test", "mask").replace(".tif", ".npy")
         tissue_mask_path = os.path.join(TISSUE_MASK_DIR, npy_basename)
         
         if not os.path.exists(gt_mask_path):
@@ -240,18 +249,20 @@ if __name__ == "__main__":
         fpr, tpr, _ = roc_curve(full_dataset_gts, full_dataset_preds)
         
         plt.figure(figsize=(10, 8), dpi=150)
-        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'Agregovaná ROC křivka (AUC = {total_auc:.4f})')
-        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Referenční čára')
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC křivka (AUC = {total_auc:.4f})')
+        plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
         plt.xlim([0.0, 1.0])
         plt.ylim([0.0, 1.05])
         plt.xlabel('Míra falešně pozitivních (False Positive Rate)', fontsize=12)
         plt.ylabel('Míra správně pozitivních (True Positive Rate)', fontsize=12)
-        plt.title(f'Agregovaná ROC Křivka pro {len(wsi_files)} WSI', fontsize=14)
+        # plt.title(f'Agregovaná ROC Křivka pro {len(wsi_files)} WSI', fontsize=14)
         plt.legend(loc="lower right")
         plt.grid(True, linestyle='--', alpha=0.6)
         
-        plot_path = os.path.join(OUTPUT_DIR, "aggregated_roc_curve.png")
+        plot_path = os.path.join(OUTPUT_DIR, "aggregated_roc_curve_deeplab.png")
+        plot_path_svg = os.path.join(OUTPUT_DIR, "aggregated_roc_curve_deeplab.svg")
         plt.savefig(plot_path, bbox_inches='tight')
+        plt.savefig(plot_path_svg, bbox_inches='tight', format='svg')
         plt.close()
         print(f"Agregovaný ROC graf uložen do: {plot_path}")
 

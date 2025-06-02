@@ -18,7 +18,6 @@ from PIL import Image, ImageOps
 from torchvision import transforms
 from torchvision.transforms.functional import to_tensor
 from tqdm import tqdm
-import h5py
 import numpy as np
 import openslide
 from openslide.deepzoom import DeepZoomGenerator
@@ -26,12 +25,14 @@ import time
 import segmentation_models_pytorch as smp
 import datetime
 import gc
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve # <-- PŘIDÁN IMPORT roc_curve
+import matplotlib.pyplot as plt # <-- PŘIDÁN IMPORT pro kreslení
 
 # --- Konfigurace ---
 model_weights_path = r"C:\Users\USER\Desktop\results\2025-05-23_01-36-24\best_weights_2025-05-23_01-36-24.pth"
-wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_068.tif"
-wsi_mask_path = r"C:\Users\USER\Desktop\wsi_dir\mask_068.tif" # Cesta k ground truth masce
+wsi_image_path = r"C:\Users\USER\Desktop\wsi_dir\tumor_017.tif"
+wsi_mask_path = r"C:\Users\USER\Desktop\wsi_dir\mask_017.tif" # Cesta k ground truth masce
+output_dir = r"C:\Users\USER\Desktop\results" # <-- NOVÉ: Adresář pro uložení výsledků (včetně grafu)
 
 # <<< Konfigurace pro filtrování podle masky tkáně >>>
 tissue_mask_dir = r"C:\Users\USER\Desktop\colab_unet\masky_new"
@@ -51,11 +52,14 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 print(f"Používám zařízení: {device}")
 print(f"Model očekává vstup: {TILE_SIZE}x{TILE_SIZE}")
 
+# Zajištění existence výstupního adresáře
+os.makedirs(output_dir, exist_ok=True)
+
 # Načtení modelu
 model = smp.Unet("resnet34", encoder_weights=None, in_channels=3, classes=1)
 try:
     if not os.path.exists(model_weights_path): raise FileNotFoundError(f"Váhy nenalezeny: {model_weights_path}")
-    model_state = torch.load(model_weights_path, map_location=device, weights_only=False)
+    model_state = torch.load(model_weights_path, map_location=device)
     if 'model_state_dict' in model_state:
         model.load_state_dict(model_state['model_state_dict'])
     else:
@@ -107,7 +111,6 @@ try:
     if not (0 <= dzg_level_index < deepzoom.level_count):
         raise ValueError(f"Neplatný DZG level index: {dzg_level_index}. Zkontrolujte TARGET_LEVEL_OFFSET.")
 
-    # --- ZDE JE OPRAVA PROHOZENÝCH PROMĚNNÝCH ---
     inference_downsample = deepzoom.level_count - 1 - dzg_level_index
     inference_level_dims = deepzoom.level_dimensions[dzg_level_index]
     
@@ -217,17 +220,47 @@ try:
             print("Ground truth data obsahují pouze jednu třídu, nelze vypočítat AUC.")
             print(f"Nalezené třídy: {np.unique(final_gts)}")
         else:
+            # Výpočet WSI-level AUC
             wsi_auc = roc_auc_score(final_gts, final_preds)
             print("="*40)
             print(f"WSI-level ROC AUC skóre: {wsi_auc:.6f}")
             print("="*40)
 
+            # --- ZAČÁTEK NOVÉ ČÁSTI: Vykreslení ROC křivky ---
+            print("Vykresluji ROC křivku...")
+            fpr, tpr, thresholds = roc_curve(final_gts, final_preds)
+
+            plt.figure(figsize=(8, 6), dpi=100)
+            plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC křivka (AUC = {wsi_auc:.4f})')
+            plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Referenční čára (náhodný tip)')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('Míra falešně pozitivních (False Positive Rate)')
+            plt.ylabel('Míra správně pozitivních (True Positive Rate)')
+            plt.title(f'ROC Křivka pro WSI: {os.path.basename(wsi_image_path)}')
+            plt.legend(loc="lower right")
+            plt.grid(True, linestyle='--', alpha=0.6)
+            
+            # Uložení grafu
+            plot_filename = f"roc_curve_{wsi_filename_base}.png"
+            plot_path = os.path.join(output_dir, plot_filename)
+            plt.savefig(plot_path)
+            plt.close() # Uvolnění paměti
+            
+            print(f"✔️ ROC křivka byla úspěšně uložena do:\n{plot_path}")
+            # --- KONEC NOVÉ ČÁSTI ---
+
+
 except Exception as e:
+    import traceback
     print(f"\nDošlo k závažné chybě: {e}")
+    traceback.print_exc() # Vypíše detailní informace o chybě
 finally:
-    if wsi: wsi.close()
-    if gt_mask_slide: gt_mask_slide.close()
-    del model, all_predictions, all_ground_truth
+    if 'wsi' in locals() and wsi: wsi.close()
+    if 'gt_mask_slide' in locals() and gt_mask_slide: gt_mask_slide.close()
+    
+    del all_predictions, all_ground_truth
+    if 'model' in locals(): del model
     if 'batch_tensor' in locals(): del batch_tensor
     if 'prediction_output' in locals(): del prediction_output
     gc.collect()

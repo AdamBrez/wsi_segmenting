@@ -1,5 +1,5 @@
 # --- START OF FINAL COMPLETE FILE ---
-
+# zkopirovano z train_gemini pred tim nez jsem ta upravil ty rozdilne velikosti na okrajich
 import os
 os.add_dll_directory(r"C:\Users\USER\miniforge3\envs\mamba_env\lib\site-packages\openslide\openslide-bin-4.0.0.6-windows-x64\openslide-bin-4.0.0.6-windows-x64\bin")
 
@@ -20,7 +20,6 @@ import h5py
 import numpy as np
 import openslide
 from model import UNet # Ujistěte se, že model.py je dostupné
-import segmentation_models_pytorch as smp  
 
 # Importy funkcí pro metriky
 from segmentation_models_pytorch.metrics import get_stats, iou_score, f1_score, recall, precision
@@ -39,7 +38,7 @@ TISSUE_MASK_DIR = r"C:\Users\USER\Desktop\colab_unet\test_lowres_masky"
 OUTPUT_PRED_DIR = r"C:\Users\USER\Desktop\test_preds\pretrained_lvl_1" 
 
 # Cesta k souboru s naučenými váhami modelu
-model_weights_path = r"C:\Users\USER\Desktop\results\2025-05-29_05-23-44\best_weights_2025-05-29_05-23-44.pth"
+model_weights_path = r"C:\Users\USER\Desktop\results\2025-05-26_02-26-06\best_weights_2025-05-26_02-26-06.pth"
 
 # <<< Konfigurace manuálního overlapu >>>
 TILE_SIZE = 256
@@ -54,12 +53,12 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 
 # <<< Konfigurace filtrování podle masky tkáně >>>
 tissue_mask_level_index = 6
-TISSUE_THRESHOLD = 0.1
+TISSUE_THRESHOLD = 0.05
 
 # <<< Ostatní konfigurace >>>
 BATCH_SIZE = 64
 THRESHOLD = 0.5
-TARGET_INFERENCE_LEVEL = 1
+TARGET_INFERENCE_LEVEL = 2
 
 
 def process_single_wsi(wsi_image_path, output_hdf5_path, tissue_mask_dir, model, device):
@@ -125,6 +124,7 @@ def process_single_wsi(wsi_image_path, output_hdf5_path, tissue_mask_dir, model,
 
         with torch.inference_mode():
             # Cyklus pro iteraci přes dlaždice
+
             # Zde vkládám plnou logiku smyčky, aby byl kód kompletní
             for r in tqdm(range(rows), desc=f"Processing {os.path.basename(wsi_image_path)}", unit="row"):
                 for c in range(cols):
@@ -180,34 +180,9 @@ def process_single_wsi(wsi_image_path, output_hdf5_path, tissue_mask_dir, model,
                             predictions = predictions_sigmoid.cpu().numpy()
                             for i in range(len(batch_coords)):
                                 coords = batch_coords[i]
-                                x, y, w_orig, h_orig = coords['x'], coords['y'], coords['w'], coords['h']
-                                
-                                # Ujistíme se, že nepřekročíme hranice output mapy
-                                y_end = min(y + h_orig, prediction_sum.shape[0])
-                                x_end = min(x + w_orig, prediction_sum.shape[1])
-                                actual_h = y_end - y
-                                actual_w = x_end - x
-                                
-                                # Ujistíme se, že nepřekročíme hranice predikce (která má vždy TILE_SIZE x TILE_SIZE)
-                                pred_h = min(actual_h, TILE_SIZE)
-                                pred_w = min(actual_w, TILE_SIZE)
-                                
-                                # Bezpečné indexování s explicitním ořezáním
-                                target_slice = prediction_sum[y:y+pred_h, x:x+pred_w]
-                                prediction_patch = predictions[i, 0, :pred_h, :pred_w]
-                                
-                                # Debug výpis pro sledování problému
-                                if target_slice.shape != prediction_patch.shape:
-                                    print(f"DEBUG: coords=({x},{y},{w_orig},{h_orig}), target={target_slice.shape}, pred={prediction_patch.shape}")
-                                    print(f"DEBUG: pred_h={pred_h}, pred_w={pred_w}, actual_h={actual_h}, actual_w={actual_w}")
-                                    # Fallback - použij minimum z obou rozměrů
-                                    final_h = min(target_slice.shape[0], prediction_patch.shape[0])
-                                    final_w = min(target_slice.shape[1], prediction_patch.shape[1])
-                                    prediction_sum[y:y+final_h, x:x+final_w] += prediction_patch[:final_h, :final_w]
-                                    prediction_count[y:y+final_h, x:x+final_w] += 1
-                                else:
-                                    prediction_sum[y:y+pred_h, x:x+pred_w] += prediction_patch
-                                    prediction_count[y:y+pred_h, x:x+pred_w] += 1
+                                x, y, w, h = coords['x'], coords['y'], coords['w'], coords['h']
+                                prediction_sum[y:y+h, x:x+w] += predictions[i, 0, :h, :w]
+                                prediction_count[y:y+h, x:x+w] += 1
                         except Exception as e: print(f"Chyba při zpracování dávky: {e}")
                         finally:
                             batch_tiles_data.clear(); batch_coords.clear(); batch_gt_labels.clear()
@@ -276,15 +251,14 @@ def process_single_wsi(wsi_image_path, output_hdf5_path, tissue_mask_dir, model,
 
 # --- HLAVNÍ SPUŠTĚCÍ BLOK ---
 if __name__ == "__main__":
-    
+    import segmentation_models_pytorch as smp
+
     main_start_time = time.time()
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Používám zařízení: {device}")
 
     # model = UNet(n_channels=3, n_classes=1)
-    model = smp.Unet(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1, activation=None)
-    # model = smp.DeepLabV3Plus(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1, activation=None)
-    # model = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1, activation=None)
+    model = smp.DeepLabV3Plus(encoder_name="resnet34", in_channels=3, classes=1, activation=None)
     try:
         state_dict = torch.load(model_weights_path, map_location=device, weights_only=False)
         model.load_state_dict(state_dict.get("model_state_dict", state_dict))

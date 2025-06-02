@@ -55,18 +55,23 @@ class MyAugmentations:
         # context_image = TF.normalize(context_image, mean=self.mean, std=self.std)
 
         return image, mask #context_image
+# mean=(0.702, 0.546, 0.696),
+# std=(0.239, 0.282, 0.216),
 
+# mean=(0.485, 0.456, 0.406),
+# std=(0.229, 0.224, 0.225),
 class AlbumentationsAug:
     def __init__(self,
-                 mean=(0.485, 0.456, 0.406),
-                 std=(0.229, 0.224, 0.225),
-                 p_flip=0.5,
-                 p_rotate90=0.5,
-                 p_shiftscalerotate=0.5,
-                 p_elastic=0.3,
-                 p_color=0.85,
-                 p_noise=0.1,
-                 p_blur=0.1):
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225),
+                 p_flip=0,
+                 p_rotate90=0.0,
+                 p_shiftscalerotate=0.0,
+                 p_elastic=0.0,
+                 p_color=0.0,
+                 p_hestain=0.0,
+                 p_noise=0.0,
+                 p_blur=0.0):
         """
         Inicializuje Albumentations pipeline pro trénink.
         Args:
@@ -83,21 +88,27 @@ class AlbumentationsAug:
             A.HorizontalFlip(p=p_flip),
             A.VerticalFlip(p=p_flip),
             A.RandomRotate90(p=p_rotate90),
-            # A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=15, p=p_shiftscalerotate,
-                            #    border_mode=cv2.BORDER_CONSTANT, value=0), # Pad černé
-            A.ElasticTransform(alpha=10, sigma=50, p=p_elastic,
+            A.Affine(scale=(0.9, 1.1), translate_percent=(0.0625, 0.0625),
+                                    rotate=(-15, 15), p=p_shiftscalerotate),
+            A.ElasticTransform(alpha=300, sigma=10, p=p_elastic,
                                border_mode=cv2.BORDER_CONSTANT),
 
             # Barevné/Intenzitní (pouze na obrázek)
-            A.HEStain(p=p_color, method="random_preset"),
+            A.RandomBrightnessContrast(p=p_color, brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1)),
+            A.HueSaturationValue(p=p_color, hue_shift_limit=(-10, 10), sat_shift_limit=(-20, 20), val_shift_limit=(-10, 10)),
+            A.RGBShift(p=p_color, r_shift_limit=(-10, 10), g_shift_limit=(-10, 10), b_shift_limit=(-10, 10)),
+
+            # H&E zbarveni
+            A.HEStain(p=p_hestain, method="random_preset", intensity_scale_range=(0.9, 1.1), intensity_shift_range=(-0.1, 0.1)),
 
             # Šum/Blur (pouze na obrázek)
-            # A.GaussNoise(var_limit=(10.0, 50.0), p=p_noise),
-            # A.GaussianBlur(blur_limit=(3, 7), p=p_blur),
+            A.GaussNoise(std_range=[0.03, 0.07], p=p_noise),
+            A.GaussianBlur(blur_limit=5, sigma_limit=[0.1, 0.9], p=p_blur),
 
             # Normalizace a převod na Tensor (aplikuje se na obrázek, ToTensorV2 i na masku)
-            A.Normalize(mean=self.mean, std=self.std, max_pixel_value=255.0),
+            A.Normalize(mean=self.mean, std=self.std, max_pixel_value=255.0, p=1.0),
             ToTensorV2(), # Důležité pro správný výstup pro PyTorch
+
         ])
 
     def __call__(self, image, mask):

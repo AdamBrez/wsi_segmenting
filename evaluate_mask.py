@@ -7,17 +7,18 @@ import h5py
 import numpy as np
 import torch
 import segmentation_models_pytorch as smp
-
+import csv
 # PŘIDÁNO: Import pro metriku z MONAI
 from monai.metrics import DiceMetric
 
 from openslide import OpenSlide
 from openslide.deepzoom import DeepZoomGenerator
 
-# --- Konfigurace ---
+# --- Konfigurace ---¨
 
-GT_SLIDE_PATH = r"C:\Users\USER\Desktop\wsi_dir\mask_068.tif"
-PRED_HDF5_PATH = r"C:\Users\USER\Desktop\test_output\best_pretrainded68.h5"
+
+GT_SLIDE_PATH = rf"F:\wsi_dir_test\mask_002.tif"
+PRED_HDF5_PATH = rf"C:\Users\USER\Desktop\test_preds\unetpp\pred_002.h5"
 HDF5_DATASET_NAME = "mask"
 TILE_SIZE = 4096
 TARGET_OPENSLIDE_LEVEL_FOR_HDF5_MASK = 2  # Předpoklad
@@ -126,16 +127,19 @@ if processed_tiles > 0:
     dice_smp = smp.metrics.f1_score(total_tp, total_fp, total_fn, total_tn).item()
     recall_smp = smp.metrics.recall(total_tp, total_fp, total_fn, total_tn).item()
     precision_smp = smp.metrics.precision(total_tp, total_fp, total_fn, total_tn).item()
-
-    print(f"Dice (F1) Score: {dice_smp:.4f}")
-    print(f"IoU (Jaccard):   {iou_smp:.4f}")
-    print(f"Recall:          {recall_smp:.4f}")
-    print(f"Precision:       {precision_smp:.4f}")
     
+
+    print(f"Dice (F1) Score: {dice_smp:.5f}")
+    print(f"IoU (Jaccard):   {iou_smp:.5f}")
+    print(f"Recall:          {recall_smp:.5f}")
+    print(f"Precision:       {precision_smp:.5f}")
+    
+    if dice_smp == 0.0 and precision_smp == 0.0 and recall_smp == 1.0:
+        recall_smp = "NaN"
     # PŘIDÁNO: Výsledky z MONAI (makro průměr)
     print("\n--- Dice skóre (MAKRO průměr, počítáno s 'monai') ---")
     dice_monai_macro = monai_dice_macro_agg.aggregate().item()
-    print(f"Dice Score:      {dice_monai_macro:.4f}  <-- Očekává se jiná hodnota než u mikro průměru")
+    print(f"Dice Score:      {dice_monai_macro:.5f}  <-- Očekává se jiná hodnota než u mikro průměru")
 
     # PŘIDÁNO: Resetování MONAI agregátoru
     monai_dice_macro_agg.reset()

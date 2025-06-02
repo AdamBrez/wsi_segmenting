@@ -9,50 +9,88 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from my_functions import basic_transform
 import segmentation_models_pytorch as smp
-from new_dataset import WSITileDatasetBalanced
+from new_dataset2 import WSITileDatasetBalanced
 from my_augmentation import MyAugmentations, AlbumentationsAug
 from segmentation_models_pytorch.metrics import get_stats, iou_score, f1_score, recall, precision
 from segmentation_models_pytorch.losses import DiceLoss, FocalLoss, TverskyLoss
 import datetime
-from load_data import load_wsi_and_ground_truth, load_lowres_masks
-from monai.networks.nets import UNet
+from new_load_data import load_and_split_data
+from model import UNet
 from monai.losses import DiceCELoss
-
+import random
+from aug_norm import AlbumentationsAugForStain, StainNormalizingAugmentationsTorchStain
 
 # nacitani dat
-wsi_paths_train, mask_paths_train, wsi_paths_val, mask_paths_val, wsi_paths_test, mask_paths_test = load_wsi_and_ground_truth(r"C:\Users\USER\Desktop\wsi_dir")
+CANCER_WSI_GT_DIR = r"C:\Users\USER\Desktop\wsi_dir"
+CANCER_LR_TISSUE_DIR = r"C:\Users\USER\Desktop\colab_unet\masky_healthy"
+CANCER_LR_GT_DIR = r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky"
+HEALTHY_WSI_DIR = r"C:\Users\USER\Desktop\normal_wsi"
+HEALTHY_LR_TISSUE_DIR = r"C:\Users\USER\Desktop\colab_unet\normal_lowres"
 
-tissue_mask_paths_train, tissue_mask_paths_val, tissue_mask_paths_test = load_lowres_masks(r"C:\Users\USER\Desktop\colab_unet\masky_healthy")
+train_data, val_data = load_and_split_data(
+    cancer_wsi_gt_main_dir=CANCER_WSI_GT_DIR,
+    cancer_lr_tissue_mask_dir=CANCER_LR_TISSUE_DIR,
+    cancer_lr_gt_mask_dir=CANCER_LR_GT_DIR,
+    healthy_wsi_dir=HEALTHY_WSI_DIR,
+    healthy_lr_tissue_mask_dir=HEALTHY_LR_TISSUE_DIR,
+    val_size=0.2, # Např. 20% pro validaci
+    random_state=42
+)
 
-gt_lowres_mask_paths_train, gt_lowres_mask_paths_val, gt_lowres_mask_paths_test = load_lowres_masks(r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky")
-
+train_wsi_paths, train_tissue_masks, train_hr_gt_masks, train_lr_gt_masks = train_data
+val_wsi_paths, val_tissue_masks, val_hr_gt_masks, val_lr_gt_masks = val_data
 if __name__ == "__main__":
 
-# Začátek trénovacího skriptu
-    color_jitter_params = {
-        "brightness": 0.20,
-        "contrast": 0.20,
-        "saturation": 0.15,
-        "hue": 0.05
-    }
+    PATH_TO_STAIN_TARGET_IMAGE = r"C:\Users\USER\Desktop\patches\patch_20250526_154106_01_cancer0.0pct.png"
+    final_augmentations = None
+    
+    print("--- Vytváření TRÉNINKOVÉ pipeline (s augmentacemi) ---")
+    train_augs_basic = AlbumentationsAugForStain(
+        # Geometrické augmentace jsou zapnuté
+        p_flip=0.5, 
+        p_rotate90=0.5,
+        p_shiftscalerotate=0.5, 
+        p_elastic=0.2,
+        
+        # Můžete opatrně experimentovat i s barvami, ale začněte s 0.0
+        p_color=0.0, 
+        p_hestain=0.0, 
+        p_noise=0.0, 
+        p_blur=0.0
+    )
+    
+    # Vytvoření finální tréninkové pipeline
+    train_pipeline = StainNormalizingAugmentationsTorchStain(
+        stain_target_image_path=PATH_TO_STAIN_TARGET_IMAGE,
+        albumentations_aug=train_augs_basic
+    )
 
-    augmentations = MyAugmentations(
-        p_flip=0.5,
-        color_jitter_params=color_jitter_params,
-        p_color=0.5,
-        mean=(0.485, 0.456, 0.406),
-        std=(0.229, 0.224, 0.225)
+    # ================================================================= #
+    # 2. Pipeline pro VALIDAČNÍ data (BEZ náhodných augmentací)         #
+    # ================================================================= #
+    print("\n--- Vytváření VALIDAČNÍ pipeline (BEZ augmentací) ---")
+    # Zde jsou všechny pravděpodobnosti náhodných změn nastaveny na 0.0!
+    val_augs_basic = AlbumentationsAugForStain(
+        p_flip=0.0, p_rotate90=0.0, p_shiftscalerotate=0.0, p_elastic=0.0,
+        p_color=0.0, p_hestain=0.0, p_noise=0.0, p_blur=0.0
+    )
+    
+    # Vytvoření finální validační pipeline.
+    # Používá STEJNÝ referenční obrázek pro konzistentní normalizaci!
+    val_pipeline = StainNormalizingAugmentationsTorchStain(
+        stain_target_image_path=PATH_TO_STAIN_TARGET_IMAGE,
+        albumentations_aug=val_augs_basic
     )
 
     albumentations_aug = AlbumentationsAug(
     p_flip=0.4,
     p_color=0.0,
-    p_elastic=0.2,
-    p_rotate90=0.3,
-    p_shiftscalerotate=0.5,
+    p_elastic=0.3,
+    p_rotate90=0.5,
+    p_shiftscalerotate=0.6,
     p_blur=0.05,
     p_noise=0.1,
-    p_hestain=0.5
+    p_hestain=0.6
     )
     # albumentations_aug = AlbumentationsAug(
     # p_flip=0.4,
@@ -67,48 +105,70 @@ if __name__ == "__main__":
     
     start = time.time()
     epochs = 100
-    batch = 24
+    batch = 12
     # device = torch.device('cpu')
     device = torch.device('cuda:0')
-    train_dataset = WSITileDatasetBalanced(wsi_paths=wsi_paths_train, tissue_mask_paths=tissue_mask_paths_train,
-                                           mask_paths=mask_paths_train, gt_lowres_mask_paths=gt_lowres_mask_paths_train,
-                                           tile_size=400, wanted_level=2, positive_sampling_prob=0.5,
-                                           min_cancer_ratio_in_tile=0.05, augmentations=albumentations_aug,
-                                           dataset_len=7200, crop=True)
+    train_dataset = WSITileDatasetBalanced(
+        wsi_paths=train_wsi_paths,
+        tissue_mask_paths=train_tissue_masks,
+        mask_paths=train_hr_gt_masks,
+        gt_lowres_mask_paths=train_lr_gt_masks,
+        tile_size=450, 
+        wanted_level=1,
+        healthy_wsi_sampling_prob=0.5, 
+        positive_sampling_prob=0.8,    
+        min_cancer_ratio_in_tile=0.05,
+        augmentations=albumentations_aug,
+        dataset_len=7200, 
+        crop=True 
+    )
     
-    trainloader = DataLoader(train_dataset, batch_size=batch, shuffle=True, num_workers=6, pin_memory=True)
+    trainloader = DataLoader(train_dataset, batch_size=batch, shuffle=True, num_workers=4, pin_memory=True)
 
-    val_dataset = WSITileDatasetBalanced(wsi_paths=wsi_paths_val, tissue_mask_paths=tissue_mask_paths_val,
-                                         mask_paths=mask_paths_val, gt_lowres_mask_paths=gt_lowres_mask_paths_val,
-                                         tile_size=256, wanted_level=2, positive_sampling_prob=0.5,
-                                         min_cancer_ratio_in_tile=0.05, augmentations=basic_transform,
-                                         dataset_len=5040)
+    val_dataset = WSITileDatasetBalanced(
+            wsi_paths=val_wsi_paths,
+            tissue_mask_paths=val_tissue_masks,
+            mask_paths=val_hr_gt_masks,
+            gt_lowres_mask_paths=val_lr_gt_masks,
+            tile_size=256, 
+            wanted_level=1,
+            healthy_wsi_sampling_prob=0.5, 
+            positive_sampling_prob=0.8,    
+            min_cancer_ratio_in_tile=0.05,
+            augmentations=basic_transform,
+            dataset_len=5040, 
+            crop=False 
+        )
     
     validloader = DataLoader(val_dataset, batch_size=batch, num_workers=4, shuffle=False, pin_memory=True)
 
-    test_dataset = WSITileDatasetBalanced(wsi_paths=wsi_paths_test, tissue_mask_paths=tissue_mask_paths_test,
-                                          mask_paths=mask_paths_test, gt_lowres_mask_paths=gt_lowres_mask_paths_test,
-                                          tile_size=256, wanted_level=2, positive_sampling_prob=0.5,
-                                          min_cancer_ratio_in_tile=0.05, augmentations=basic_transform,
-                                          dataset_len=72000)
+    # test_dataset = WSITileDatasetBalanced(wsi_paths=wsi_paths_test, tissue_mask_paths=tissue_mask_paths_test,
+    #                                       mask_paths=mask_paths_test, gt_lowres_mask_paths=gt_lowres_mask_paths_test,
+    #                                       tile_size=256, wanted_level=2, positive_sampling_prob=0.5,
+    #                                       min_cancer_ratio_in_tile=0.05, augmentations=basic_transform,
+    #                                       dataset_len=72000)
     
-    testloader = DataLoader(test_dataset,batch_size=batch, num_workers=2, shuffle=False)
+    # testloader = DataLoader(test_dataset,batch_size=batch, num_workers=2, shuffle=False)
     
     # net = smp.DeepLabV3Plus(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
-    net = smp.Unet(encoder_name="resnet18", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
-    # net = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
+    # net = smp.Unet(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
+    # net = UNet(n_channels=3, n_classes=1)
+    net = smp.UnetPlusPlus(encoder_name="resnet34", encoder_weights="imagenet", in_channels=3, classes=1, activation=None)
     # net = UNet(spatial_dims=2, in_channels=3, out_channels=1, channels=(64, 128, 256, 512, 1024),
     #            strides=(2, 2, 2, 2), num_res_units=0, act="relu", norm="batch", dropout=0.0)
+    # net = UNet(n_channels=3, n_classes=1)
     net = net.to(device)
     lr_start = 0.001
     optimizer = optim.AdamW(net.parameters(), lr=lr_start, weight_decay=1e-4) #weight_decay=1e-5
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50,80], gamma=0.1)
+    # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[50,80], gamma=0.1)
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=7, threshold=0.001, factor=0.2, min_lr=1e-6, cooldown=1)
-    # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, steps_per_epoch=len(trainloader), epochs=epochs, max_lr=0.001, pct_start=0.3, div_factor=25, final_div_factor=1000)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=5e-6)
     # early_stopping = EarlyStopping(patience=10, verbose=True, delta=0.001)
     loss_func = DiceLoss(mode="binary", from_logits=True, smooth=1e-6)
-    # loss_func = FocalLoss(mode="binary", alpha=0.6, gamma=2.0)
-    
+    # loss_func = DiceCELoss(sigmoid=True, squared_pred=True)
+    # weights_and_optimizer = torch.load(r"C:\Users\USER\Desktop\results\2025-05-23_16-20-00\best_weights_2025-05-23_16-20-00.pth", map_location=device, weights_only=False)
+    # net.load_state_dict(weights_and_optimizer["model_state_dict"])
+    # optimizer.load_state_dict(weights_and_optimizer["optimizer_state_dict"])
     n_epochs_avg = 5 
     best_val_dice = float("-inf")
     weights_patience = 0
@@ -156,6 +216,12 @@ if __name__ == "__main__":
             batch_time = time.time() - start_time
             batch_load_time.append(batch_time)
 
+            # debug pro tvar data a lbl
+            if epoch == 0 and k == 0:
+                print(f"Data shape: {data.shape}, dtype: {data.dtype}")
+                print(f"Label shape: {lbl.shape}, dtype: {lbl.dtype}")
+                print("-"*30)
+
             data = data.to(device)
             lbl = lbl.to(device)
 
@@ -201,6 +267,11 @@ if __name__ == "__main__":
         epoch_val_loss = 0.0
         with torch.inference_mode():
             for kk,(data, lbl) in enumerate(validloader):
+
+                if epoch == 0 and kk == 0:
+                    print(f"Data shape: {data.shape}, dtype: {data.dtype}")
+                    print(f"Label shape: {lbl.shape}, dtype: {lbl.dtype}")
+                    print("-"*30)
 
                 data = data.to(device)
                 lbl = lbl.to(device)
@@ -262,7 +333,11 @@ if __name__ == "__main__":
                     "val_precision": smp_precision_val,
                     "val_recall": smp_recall_val,
                     "lr": current_lr,
-                    "scheduler": type(scheduler).__name__
+                    "scheduler": type(scheduler).__name__,
+                    "torch_rng_state": torch.get_rng_state(),
+                    "numpy_rng_state": np.random.get_state(),
+                    "python_rng_state": random.getstate(),
+                    "scheduler_state_dict": scheduler.state_dict() if scheduler else None
                 }
                 try:
                     torch.save(checkpoint, rf"C:\Users\USER\Desktop\results\{current_date}\best_weights_{current_date}.pth")
@@ -304,37 +379,37 @@ if __name__ == "__main__":
     test_precision_scores = []
     epoch_test_tp, epoch_test_fp, epoch_test_fn, epoch_test_tn = 0, 0, 0, 0
     # Test loop
-    with torch.inference_mode():
-        for kk, (data, lbl) in enumerate(testloader):
-            data = data.to(device)
-            lbl = lbl.to(device)
+    # with torch.inference_mode():
+    #     for kk, (data, lbl) in enumerate(testloader):
+    #         data = data.to(device)
+    #         lbl = lbl.to(device)
 
-            # Předpověď sítě
-            net.eval()
-            output = net(data)
-            output = torch.sigmoid(output)
+    #         # Předpověď sítě
+    #         net.eval()
+    #         output = net(data)
+    #         output = torch.sigmoid(output)
 
-            lbl_long = lbl.long()
-            tp, fp, fn, tn = get_stats(output, lbl_long, mode="binary", threshold=0.5)
-            epoch_test_fp += fp.sum()
-            epoch_test_fn += fn.sum()
-            epoch_test_tp += tp.sum()
-            epoch_test_tn += tn.sum()
+    #         lbl_long = lbl.long()
+    #         tp, fp, fn, tn = get_stats(output, lbl_long, mode="binary", threshold=0.5)
+    #         epoch_test_fp += fp.sum()
+    #         epoch_test_fn += fn.sum()
+    #         epoch_test_tp += tp.sum()
+    #         epoch_test_tn += tn.sum()
 
-    epoch_test_precision = precision(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
-    epoch_test_recall = recall(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
-    epoch_test_dice = f1_score(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
-    epoch_test_iou = iou_score(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
+    # epoch_test_precision = precision(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
+    # epoch_test_recall = recall(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
+    # epoch_test_dice = f1_score(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
+    # epoch_test_iou = iou_score(tp=epoch_test_tp, fp=epoch_test_fp, fn=epoch_test_fn, tn=epoch_test_tn).item()
 
-    test_dice_scores.append(epoch_test_dice)
-    test_iou_scores.append(epoch_test_iou)
-    test_recall_scores.append(epoch_test_recall)
-    test_precision_scores.append(epoch_test_precision)
+    # test_dice_scores.append(epoch_test_dice)
+    # test_iou_scores.append(epoch_test_iou)
+    # test_recall_scores.append(epoch_test_recall)
+    # test_precision_scores.append(epoch_test_precision)
 
-    print(f"Average Dice coefficient on test data: {np.mean(test_dice_scores):.4f}")
-    print(f"Average IoU on test data: {np.mean(test_iou_scores):.4f}")
-    print(f"Average recall on test data: {np.mean(test_recall_scores):.4f}")
-    print(f"Average precision on test data: {np.mean(test_precision_scores):.4f}")
+    # print(f"Average Dice coefficient on test data: {np.mean(test_dice_scores):.4f}")
+    # print(f"Average IoU on test data: {np.mean(test_iou_scores):.4f}")
+    # print(f"Average recall on test data: {np.mean(test_recall_scores):.4f}")
+    # print(f"Average precision on test data: {np.mean(test_precision_scores):.4f}")
     print(f"Average batch load time: {np.mean(batch_load_time):.4f} s")
     print("Proběhl celý skript.")
 
@@ -345,7 +420,7 @@ if __name__ == "__main__":
     
     model_and_metadata = {
         "model": type(net).__name__,
-        "encoder": "restnet18",
+        "encoder": "resnet34",
         "epochs": epochs,
         "lr_start": lr_start, 
         "lr_end": optimizer.param_groups[0]['lr'],
@@ -362,20 +437,22 @@ if __name__ == "__main__":
         "val_iou": smp_iou_val,
         "val_precision": smp_precision_val,
         "val_recall": smp_recall_val,
-        "test_dice": epoch_test_dice,
-        "test_iou": epoch_test_iou,
-        "test_precision": epoch_test_precision,
-        "test_recall": epoch_test_recall,
+        # "test_dice": epoch_test_dice,
+        # "test_iou": epoch_test_iou,
+        # "test_precision": epoch_test_precision,
+        # "test_recall": epoch_test_recall,
         "loss_function": type(loss_func).__name__,
         "augmentation": train_dataset.augmentations,
-        "wanted_level": vars(test_dataset)["wanted_level"],
+        # "wanted_level": vars(test_dataset)["wanted_level"],
         "model_state_dict": net.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
         "train_loss_hist": train_loss_hist,
         "valid_loss_hist": valid_loss_hist,
         "runtime": end - start,
-        "info": (f"Trénování na smp Unetu s předtrénovanými váhy,"
-                 "scheduler byl použit (multistep[50,80]). "
-                 "Augmentace pokorcile. WD 1e-4"),
+        "info": (f"Trénování unet++ s pretrained vahami,"
+                 "scheduler byl použit (cosinelr). "
+                 "Augmentace pokrocile a dlazdice brany z lvl 1 ne 2. WD 1e-4 a trenénink na celem camelyon16 bez test sady"),
+        
     }
     # Uložení váh modelu
     torch.save(model_and_metadata, model_save_path)

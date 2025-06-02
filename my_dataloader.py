@@ -1,129 +1,149 @@
 import os
-os.add_dll_directory(r"C:\Users\USER\miniforge3\envs\mamba_env\lib\site-packages\openslide\openslide-bin-4.0.0.6-windows-x64\openslide-bin-4.0.0.6-windows-x64\bin")
-
-from PIL import Image
-from torch.utils.data import Dataset
-from random import randint
 import numpy as np
-from openslide import OpenSlide
+from PIL import Image # Potřebné pro práci s PIL obrázky, pokud MyAugmentations očekává PIL
+import torch
+from matplotlib import pyplot as plt
 from torchvision.transforms import functional as TF
 
-"""
-    V tomto skriptu mám vytvořený custom dataset, který používám pro načítání dlaždic do sítě.
-"""
+# Přidání cesty k OpenSlide DLL (upravte podle potřeby)
+try:
+    openslide_dll_path = r"C:\Users\USER\miniforge3\envs\mamba_env\lib\site-packages\openslide\openslide-bin-4.0.0.6-windows-x64\openslide-bin-4.0.0.6-windows-x64\bin"
+    if hasattr(os, 'add_dll_directory') and os.path.exists(openslide_dll_path):
+        os.add_dll_directory(openslide_dll_path)
+    elif 'OPENSLIDE_PATH' not in os.environ and os.path.exists(os.path.join(openslide_dll_path, 'openslide-0.dll')): # Fallback pro starší Python/OpenSlide
+         os.environ['PATH'] = openslide_dll_path + os.pathsep + os.environ['PATH']
+except Exception as e:
+    print(f"Chyba při nastavování OpenSlide DLL: {e}")
 
-class WSITileDataset(Dataset):
-    def __init__(self, wsi_paths, tissue_mask_paths, mask_paths, tile_size=256, augmentations=None, min_foreground_ratio=0.05):
-        self.wsi_paths = wsi_paths
-        self.tissue_mask_paths = tissue_mask_paths  # Cesty k maskám tkáně (.npy)
-        self.mask_paths = mask_paths
-        self.tile_size = tile_size
-        self.augmentations = augmentations
-        self.min_foreground_ratio = min_foreground_ratio  # Minimální podíl tkáně
+from openslide import OpenSlide
+from openslide.deepzoom import DeepZoomGenerator
+from my_augmentation import AlbumentationsAug # Použijeme AlbumentationsAug
 
-        # Načteme masky tkáně
-        # self.tissue_masks = [np.load(path) for path in self.tissue_mask_paths]
+# --- Konfigurace ---
+WSI_PATH = r"C:\Users\USER\Desktop\wsi_dir\tumor_068.tif"
+MASK_PATH = r"C:\Users\USER\Desktop\wsi_dir\mask_068.tif"
+TARGET_LEVEL_OFFSET = 2 # Kolik úrovní od nejvyššího rozlišení (0) chceme použít.
+TILE_COORDS = (32, 120) # Souřadnice dlaždice (sloupec, řádek) na vybrané úrovni
+TILE_SIZE = 256 # Velikost dlaždice načítané z WSI
+CROP_SIZE = (181, 181) # Cílová velikost po center_crop
 
-    def __len__(self):
-        return 19840  # Počet dlaždic na epochu
+# Parametry pro normalizaci (měly by odpovídat těm v AlbumentationsAug)
+AUG_MEAN = (0.702, 0.546, 0.696)
+AUG_STD = (0.239, 0.282, 0.216)
 
-    def __getitem__(self, idx):
-        while True:
-            # Náhodný výběr WSI a jeho masky tkáně
-            wsi_idx = randint(0, len(self.wsi_paths) - 1)
-            wanted_level = 2
-            # print(self.wsi_paths[wsi_idx], self.mask_paths[wsi_idx], self.tissue_mask_paths[wsi_idx])
-            wsi = OpenSlide(self.wsi_paths[wsi_idx])
-            mask = OpenSlide(self.mask_paths[wsi_idx])
-            tissue_mask = self.tissue_mask_paths[wsi_idx]
-            tissue_mask = np.load(tissue_mask)
-            # print(f"Načítám dlaždici z {self.wsi_paths[wsi_idx].split("\\")[-1]} a masku z {self.mask_paths[wsi_idx].split("\\")[-1]} s pomocí {self.tissue_mask_paths[wsi_idx].split("\\")[-1]}")
+# --- Hlavní skript ---
+try:
+    wsi_slide = OpenSlide(WSI_PATH)
+    mask_slide = OpenSlide(MASK_PATH)
 
-            # Rozměry WSI a masky tkáně
-            wsi_width, wsi_height = wsi.level_dimensions[wanted_level]  #<-- změna dimenze (rozlišení) 
-            native_width, native_height = wsi.level_dimensions[0]
-            tissue_mask_height, tissue_mask_width = tissue_mask.shape
-            # Přepočítání měřítka mezi WSI a maskou tkáně
-            scale_x = wsi_width / tissue_mask_width
-            scale_y = wsi_height / tissue_mask_height
-            native_to_wanted_x = native_width / wsi_width
-            native_to_wanted_y = native_height / wsi_height
+    wsi_dz = DeepZoomGenerator(wsi_slide, tile_size=TILE_SIZE, overlap=0, limit_bounds=True)
+    mask_dz = DeepZoomGenerator(mask_slide, tile_size=TILE_SIZE, overlap=0, limit_bounds=True)
 
-            # Náhodné souřadnice v masce tkáně
-            tissue_y, tissue_x = np.where(tissue_mask > 0)  # Vrací indexy z numpy pole kde je hodnota > 0 (tkáň)
-            rand_idx = randint(0, len(tissue_x) - 1)
-            # Převedeme souřadnice zpět do originálního rozlišení WSI
-            x = int(tissue_x[rand_idx] * scale_x)
-            y = int(tissue_y[rand_idx] * scale_y)
-
-            # Ověříme, že dlaždice je v rámci WSI
-            if x + self.tile_size <= wsi_width and y + self.tile_size <= wsi_height:
-                # Načtení dlaždice a odpovídající masky
-                tile = wsi.read_region((x*int(native_to_wanted_x), y*int(native_to_wanted_y)), wanted_level, (self.tile_size, self.tile_size)).convert("RGB")
-                mask_tile = mask.read_region((x*int(native_to_wanted_x), y*int(native_to_wanted_y)), wanted_level, (self.tile_size, self.tile_size)).convert("L")
-                mask_tile = np.array(mask_tile) > 128
-                mask_tile = Image.fromarray(mask_tile.astype(np.uint8) * 255, mode="L")  # mode "L" nechá masku jako 8bitvou grayscale není binární / možná bych mohl dát bool do astype
-
-                # Augmentace
-                if self.augmentations:
-                    tile, mask_tile = self.augmentations(tile, mask_tile)
-                else:
-                    tile = TF.to_tensor(tile)
-                    mask_tile = TF.to_tensor(mask_tile)
-
-                return tile, mask_tile
-            
-if __name__ == "__main__":
-    from torch.utils.data import DataLoader
-    from matplotlib import pyplot as plt
-    from my_augmentation import MyAugmentations
-
-    wsi_paths_train = [
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_001.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_002.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_003.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\tumor_089.tif",
-    ]
-
-    mask_paths_train = [
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_001.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_002.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_003.tif",
-    r"E:\skola\U-Net\Pytorch-UNet\wsi_dir\mask_089.tif"
-    ]
-
-    tissue_mask_paths_train = [
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_001.npy",
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_002.npy",
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_003.npy",
-    r"C:\Users\USER\Desktop\colab_unet\masky_new\mask_089.npy",
-    ]
-    color_jitter_params = {
-        "brightness": 0.2,
-        "contrast": 0.2,
-        "saturation": 0.2,
-        "hue": 0.1
-    }
-
-    augmentations = MyAugmentations(
-        p_flip=0.5,
-        color_jitter_params=color_jitter_params,
-        mean=(0.5, 0.5, 0.5),
-        std=(0.5, 0.5, 0.5)
-    )
-
-    dataset = WSITileDataset(wsi_paths_train, tissue_mask_paths_train, mask_paths_train, augmentations=None)
-    trainloader = DataLoader(dataset, batch_size=4, shuffle=True)
-    images, labels = next(iter(trainloader))
+    if wsi_dz.level_count > TARGET_LEVEL_OFFSET:
+        target_dz_level = wsi_dz.level_count - 1 - TARGET_LEVEL_OFFSET
+    else:
+        target_dz_level = wsi_dz.level_count -1
     
-    fig, axes = plt.subplots(2, 4, figsize=(10, 5))
-    for i in range(4):
-        img = images[i].permute(1, 2, 0).numpy()
-        # img  = (img + 1) /2.0
-        mask = labels[i].permute(1, 2, 0).numpy()
-        axes[0, i].imshow(img)
-        axes[1, i].imshow(mask, cmap="gray")
-        axes[0, i].axis("off")
-        axes[1, i].axis("off")
-    plt.show()
+    print(f"Používám DeepZoom úroveň: {target_dz_level} (z {wsi_dz.level_count} úrovní)")
+    print(f"Odpovídající OpenSlide úroveň přibližně: {wsi_dz.level_count - 1 - target_dz_level}")
+    print(f"Rozměry na této DZ úrovni: {wsi_dz.level_dimensions[target_dz_level]}")
+
+    original_wsi_tile_pil = wsi_dz.get_tile(target_dz_level, TILE_COORDS)
+    original_mask_tile_pil = mask_dz.get_tile(target_dz_level, TILE_COORDS).convert("L")
+    
+    print(f"Načtená dlaždice WSI - tvar: {np.array(original_wsi_tile_pil).shape}, typ: {type(original_wsi_tile_pil)}")
+    print(f"Načtená dlaždice masky - tvar: {np.array(original_mask_tile_pil).shape}, typ: {type(original_mask_tile_pil)}")
+
+    # Inicializace augmentační třídy AlbumentationsAug
+    augmentations = AlbumentationsAug(
+        mean=AUG_MEAN, # Tyto hodnoty by měly odpovídat AUG_MEAN, AUG_STD pro správnou denormalizaci
+        std=AUG_STD,
+        p_flip=0.1,
+        p_rotate90=0.5,
+        p_shiftscalerotate=0.9,
+        p_elastic=0.2, # Můžete upravit pravděpodobnosti
+        p_color=0.0,
+        p_hestain=0.5,
+        p_noise=0.2,
+        p_blur=0.1
+    )
+    
+    mean_tensor = torch.tensor(AUG_MEAN, dtype=torch.float32).view(3, 1, 1)
+    std_tensor = torch.tensor(AUG_STD, dtype=torch.float32).view(3, 1, 1)
+
+    augmented_outputs = []
+    for _ in range(3):
+        aug_img_tensor, aug_mask_tensor = augmentations(original_wsi_tile_pil, original_mask_tile_pil)
+        augmented_outputs.append((aug_img_tensor, aug_mask_tensor))
+
+    fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+
+    # Oříznutí originálního snímku a masky na stejnou velikost jako augmentované verze
+    original_wsi_tile_pil_cropped = TF.center_crop(original_wsi_tile_pil, CROP_SIZE)
+    original_mask_tile_pil_cropped = TF.center_crop(original_mask_tile_pil, CROP_SIZE)
+
+    # Vykreslení oříznutého originálního snímku
+    axes[0, 0].imshow(original_wsi_tile_pil_cropped)
+    axes[0, 0].set_title("Originální snímek")
+    axes[0, 0].axis("off")
+
+    # Vykreslení oříznuté originální masky
+    original_mask_display = np.array(original_mask_tile_pil_cropped)
+    axes[1, 0].imshow(original_mask_display, cmap='gray')
+    axes[1, 0].set_title("Originální maska")
+    axes[1, 0].axis("off")
+
+    for i, (aug_img, aug_mask) in enumerate(augmented_outputs):
+        # Center crop po augmentaci
+        aug_img = TF.center_crop(aug_img, CROP_SIZE)
+        aug_mask = TF.center_crop(aug_mask, CROP_SIZE)
+
+        # Denormalizace obrazu (AlbumentationsAug již provedla normalizaci)
+        img_display = aug_img.clone() * std_tensor + mean_tensor
+        img_display = img_display.permute(1, 2, 0).cpu().numpy().clip(0, 1)
         
+        axes[0, i + 1].imshow(img_display)
+        axes[0, i + 1].set_title(f"Augmentovaný snímek {i+1}")
+        axes[0, i + 1].axis("off")
+
+        # Příprava masky pro zobrazení
+        # AlbumentationsAug by měla vracet masku jako [1, H, W] float tensor.
+        # Po center_crop bude [1, CROP_SIZE[0], CROP_SIZE[1]]
+        if aug_mask.ndim == 4: # Pro případ, že by maska měla neočekávaný tvar [B, C, H, W] nebo [B, H, W, C]
+            if aug_mask.shape[0] == 1 and aug_mask.shape[1] == 1 : # [1,1,H,W]
+                 mask_display = aug_mask.squeeze(0).squeeze(0).cpu().numpy().clip(0,1)
+            elif aug_mask.shape[0] == 1 and aug_mask.shape[3] == 1: # [1, H, W, 1]
+                mask_display = aug_mask.squeeze(0).squeeze(-1).cpu().numpy().clip(0, 1)
+            elif aug_mask.shape[0] == 1 and aug_mask.shape[3] == 3: # [1, H, W, 3]
+                print(f"Varování: Aug. maska {i+1} má tvar [1,H,W,3]. Vykresluji první kanál.")
+                mask_display = aug_mask.squeeze(0)[:, :, 0].cpu().numpy().clip(0, 1)
+            else:
+                raise ValueError(f"Neočekávaný tvar 4D aug. masky: {aug_mask.shape}")
+        elif aug_mask.ndim == 3:
+            if aug_mask.shape[0] == 1: # Očekávaný tvar [1, H, W]
+                mask_display = aug_mask.squeeze(0).cpu().numpy().clip(0, 1)
+            elif aug_mask.shape[0] == 3: # Tvar [3, H, W]
+                print(f"Varování: Aug. maska {i+1} má 3 kanály. Vykresluji první kanál.")
+                mask_display = aug_mask[0, :, :].cpu().numpy().clip(0, 1)
+            else:
+                raise ValueError(f"Neočekávaný tvar 3D aug. masky: {aug_mask.shape}")
+        elif aug_mask.ndim == 2: # Tvar [H, W]
+            mask_display = aug_mask.cpu().numpy().clip(0, 1)
+        else:
+            raise ValueError(f"Neočekávaný počet dimenzí ({aug_mask.ndim}) pro aug. masku: {aug_mask.shape}")
+
+        axes[1, i + 1].imshow(mask_display, cmap='gray')
+        axes[1, i + 1].set_title(f"Augmentovaná maska {i+1}")
+        axes[1, i + 1].axis("off")
+
+    plt.subplots_adjust(hspace=0.4)
+    plt.show()
+
+except FileNotFoundError as e:
+    print(f"Chyba: Soubor nebyl nalezen - {e}")
+except ImportError as e:
+    print(f"Chyba importu: {e}. Ujistěte se, že máte nainstalované všechny potřebné knihovny a soubor my_augmentation.py je dostupný.")
+except Exception as e:
+    print(f"Nastala neočekávaná chyba: {e}")
+    import traceback
+    traceback.print_exc()

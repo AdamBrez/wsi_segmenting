@@ -230,7 +230,6 @@ class WSITileDatasetBalanced(Dataset):
 
                 tile_pil = wsi.read_region((read_x, read_y), self.wanted_level, (self.tile_size, self.tile_size)).convert("RGB")
                 
-                
                 mask_np = np.zeros((self.tile_size, self.tile_size), dtype=bool) 
                 if not is_healthy_wsi_sample and mask_gt_slide is not None:
                     mask_pil = mask_gt_slide.read_region((read_x, read_y), self.wanted_level, (self.tile_size, self.tile_size)).convert("L")
@@ -286,16 +285,27 @@ if __name__ == "__main__":
     from new_load_data import load_and_split_data
     from matplotlib import pyplot as plt
     import time
-    from PIL import Image
-    # Změna importu - načítáme obě třídy z upraveného souboru
-    from aug_norm import AlbumentationsAugForStain, StainNormalizingAugmentationsTorchStain
-    
-    # ... (definice cest zůstává stejná) ...
+    from my_functions import basic_transform
+    try:
+        from my_augmentation import MyAugmentations, AlbumentationsAug
+        # from my_functions import basic_transform # Pokud existuje
+    except ImportError:
+        print("Varování: my_augmentation.py nenalezen nebo neobsahuje potřebné třídy.")
+        MyAugmentations = None
+        AlbumentationsAug = None
+        # basic_transform = None
+
+    # vsuvka nacitani dat z load data
+    # Definice cest k adresářům (upravte podle vaší skutečné struktury)
     CANCER_WSI_GT_DIR = r"C:\Users\USER\Desktop\wsi_dir"
     CANCER_LR_TISSUE_DIR = r"C:\Users\USER\Desktop\colab_unet\masky_healthy"
     CANCER_LR_GT_DIR = r"C:\Users\USER\Desktop\colab_unet\gt_lowres_masky"
     HEALTHY_WSI_DIR = r"C:\Users\USER\Desktop\normal_wsi"
     HEALTHY_LR_TISSUE_DIR = r"C:\Users\USER\Desktop\colab_unet\normal_lowres"
+
+    # Testovací složka pro WSI, která se nepoužije pro train/val
+    # TEST_WSI_DIR = r"C:\cesta\k\test\wsi"
+    # TEST_LR_MASKS_DIR = r"C:\cesta\k\test\lr_masks"
 
     print("Načítání a rozdělování dat pro trénink a validaci...")
     train_data, val_data = load_and_split_data(
@@ -304,47 +314,28 @@ if __name__ == "__main__":
         cancer_lr_gt_mask_dir=CANCER_LR_GT_DIR,
         healthy_wsi_dir=HEALTHY_WSI_DIR,
         healthy_lr_tissue_mask_dir=HEALTHY_LR_TISSUE_DIR,
-        val_size=0.2,
+        val_size=0.2, # Např. 20% pro validaci
         random_state=42
     )
 
     train_wsi_paths, train_tissue_masks, train_hr_gt_masks, train_lr_gt_masks = train_data
     val_wsi_paths, val_tissue_masks, val_hr_gt_masks, val_lr_gt_masks = val_data
-
-    random.seed(int(time.time()))
-    
+    #konec vsuvky
+    random.seed(int(time.time()))  # Pro reprodukovatelnost
     # --- Nastavení augmentací ---
-    
-    PATH_TO_STAIN_TARGET_IMAGE = r"C:\Users\USER\Desktop\patches\patch_20250526_154106_01_cancer0.0pct.png"
-    final_augmentations = None
-    
-    # Změna zde: Kontrolujeme dostupnost nové třídy
-    if AlbumentationsAugForStain and StainNormalizingAugmentationsTorchStain:
-        # 1. Vytvoříme instanci základních augmentací (bez normalizace a to_tensor)
-        albumentations_basic = AlbumentationsAugForStain(
-            p_flip=0.5, p_color=0.0, p_elastic=0.3, p_rotate90=0.5,
-            p_shiftscalerotate=0.5, p_blur=0.1, p_noise=0.05, p_hestain=0.5
+    albumentations_aug = None
+    if AlbumentationsAug:
+        albumentations_aug = AlbumentationsAug(
+            p_flip=0.0, p_color=0.0, p_elastic=0.0, p_rotate90=0.0,
+            p_shiftscalerotate=0.0, p_blur=0.0, p_noise=0.0, p_hestain=0.0,
         )
-
-        # 2. Vytvoříme obalující třídu, která přidá TORCHSTAIN normalizaci
-        try:
-            print("\n--- Vytváření augmentačního pipeline s TorchStain ---")
-            final_augmentations = StainNormalizingAugmentationsTorchStain(
-                stain_target_image_path=PATH_TO_STAIN_TARGET_IMAGE,
-                albumentations_aug=albumentations_basic
-            )
-        except FileNotFoundError:
-            print(f"CHYBA: Referenční obrázek pro normalizaci barvení nebyl nalezen na cestě: {PATH_TO_STAIN_TARGET_IMAGE}")
-            final_augmentations = None
-        
     else:
-        print("Třídy pro augmentaci nejsou dostupné, augmentace nebudou použity.")
+        print("AlbumentationsAug nejsou dostupné, augmentace nebudou použity.")
 
     # --- Vytvoření Datasetu a DataLoaderu ---
-    # Zbytek kódu je již stejný, protože se spoléhá na to, že `final_augmentations`
-    # je platný objekt s metodou __call__.
-    if not train_wsi_paths:
-        print("Žádné WSI nebyly nalezeny pro trénink. Ukončuji.")
+    all_wsi_paths = 1
+    if not all_wsi_paths:
+        print("Žádné WSI nebyly nalezeny nebo správně nakonfigurovány. Ukončuji.")
     else:
         print("\nVytváření datasetu...")
         dataset = WSITileDatasetBalanced(
@@ -352,14 +343,14 @@ if __name__ == "__main__":
             tissue_mask_paths=train_tissue_masks,
             mask_paths=train_hr_gt_masks,
             gt_lowres_mask_paths=train_lr_gt_masks,
-            tile_size=500, 
-            wanted_level=2,
-            healthy_wsi_sampling_prob=0.5, 
+            tile_size=256, 
+            wanted_level=1,
+            healthy_wsi_sampling_prob=0.8, 
             positive_sampling_prob=0.8,    
             min_cancer_ratio_in_tile=0.05,
-            augmentations=final_augmentations, # Zde předáme novou instanci
+            augmentations=basic_transform,
             dataset_len=100, 
-            crop=True 
+            crop=False 
         )
 
         print("Vytváření DataLoaderu...")
@@ -439,8 +430,6 @@ if __name__ == "__main__":
                 
                 # print(f"Všechny výřezky uloženy do: {patches_dir}")
                 
-                # Odstraňte plt.savefig() bez parametrů
-                # plt.savefig()
         except StopIteration:
              print("Chyba: DataLoader je prázdný. Zkontrolujte délku datasetu, __len__ metodu, nebo jestli jsou dostupné WSI po filtraci v __init__.")
         except Exception as e:

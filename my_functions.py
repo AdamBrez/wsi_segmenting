@@ -144,9 +144,12 @@ def basic_transform(tile, mask):  #context_image
     Konstatnty jsou pro případ, že se jako enkóder využívá typ,
     který byl trénován na ImageNetu.   
     """
-
+    PATCH_CAMELYON_MEAN = [0.702, 0.546, 0.696]
+    PATCH_CAMELYON_STD = [0.239, 0.282, 0.216]
     IMAGENET_MEAN = [0.485, 0.456, 0.406]
     IMAGENET_STD = [0.229, 0.224, 0.225]
+    # mean=(0.702, 0.546, 0.696),
+    # std=(0.239, 0.282, 0.216),
 
     image = TF.to_tensor(tile)
     image = TF.normalize(image, mean=IMAGENET_MEAN, std=IMAGENET_STD)
