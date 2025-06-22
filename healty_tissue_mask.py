@@ -11,18 +11,18 @@ import openslide
     x: číslo WSI, pro které chceme vytvořit masku
 """
 # x = 15
-for x in range(1,16):
+for x in range(91,92):
     slide_id = f"{x:03d}"  
     # Cesta k WSI
-    slide_path = fr"F:\histology_lungs\histology_lungs\converted\test\data\tumor_{slide_id}.tif"
-    mask_path = rf"F:\histology_lungs\histology_lungs\converted\test\mask\mask_{slide_id}.tif"
+    slide_path = fr"C:\Users\USER\Desktop\wsi_dir\tumor_{slide_id}.tif"
+    mask_path = rf"C:\Users\USER\Desktop\wsi_dir\mask_{slide_id}.tif"
     a = slide_path.split("\\")[-1]
     print(f"Zpracovává se wsi č.: {a}")
     # Otevřeme slide
     slide = openslide.OpenSlide(slide_path)
     slide_mask = openslide.OpenSlide(mask_path)
 
-    selected_level = 3
+    selected_level = 6
     level_dims = slide.level_dimensions[selected_level]
 
     # Pozor: read_region vrací RGBA, takže poslední kanál je alfa
@@ -66,10 +66,10 @@ for x in range(1,16):
     healthy_tissue_mask = cv2.morphologyEx(healthy_tissue_mask, cv2.MORPH_CLOSE, kernel)
 
     # Uložení masky zdravé tkáně
-    output_path = rf"F:\histology_lungs\histology_lungs\converted\test\healthy_lowres\mask_{slide_id}.npy"
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    np.save(output_path, healthy_tissue_mask)
-    print(f"Maska zdravé tkáně byla uložena do {output_path}")
+    # output_path = rf"F:\histology_lungs\histology_lungs\converted\test\healthy_lowres\mask_{slide_id}.npy"
+    # os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    # np.save(output_path, healthy_tissue_mask)
+    # print(f"Maska zdravé tkáně byla uložena do {output_path}")
 
     ####################################################################################################
     ############################## vizualizace překrytí masek ##########################################
@@ -80,25 +80,25 @@ for x in range(1,16):
     plt.figure(figsize=(12, 8))
 
     # Původní obrázek
-    plt.subplot(2, 2, 1)
+    plt.subplot(1, 4, 1)
     plt.imshow(image)
     plt.axis("off")
     plt.title("Původní obrázek")
 
     # Maska celkové tkáně
-    plt.subplot(2, 2, 2)
+    plt.subplot(1, 4, 2)
     plt.imshow(tissue_mask, cmap="Blues")
     plt.axis("off")
     plt.title("Celková maska tkáně")
 
     # Maska nádorové tkáně
-    plt.subplot(2, 2, 3)
+    plt.subplot(1, 4, 3)
     plt.imshow(mask_thumb_np, cmap="Reds")
     plt.axis("off")
     plt.title("Maska nádorové tkáně")
 
     # Maska zdravé tkáně
-    plt.subplot(2, 2, 4)
+    plt.subplot(1, 4, 4)
     plt.imshow(healthy_tissue_mask, cmap="Greens")
     plt.axis("off")
     plt.title("Maska zdravé tkáně")
@@ -129,3 +129,4 @@ for x in range(1,16):
 
     plt.tight_layout()
     plt.show()
+

@@ -345,7 +345,7 @@ if __name__ == "__main__":
             gt_lowres_mask_paths=train_lr_gt_masks,
             tile_size=256, 
             wanted_level=1,
-            healthy_wsi_sampling_prob=0.8, 
+            healthy_wsi_sampling_prob=0.4, 
             positive_sampling_prob=0.8,    
             min_cancer_ratio_in_tile=0.05,
             augmentations=basic_transform,
@@ -395,40 +395,59 @@ if __name__ == "__main__":
                 plt.tight_layout()
                 plt.show()
                 
-                # Uložení jednotlivých výřezků (pouze obrázky)
-                # patches_dir = r"C:\Users\USER\Desktop\patches"
-                # os.makedirs(patches_dir, exist_ok=True)
+                # Uložení jednotlivých výřezků ve SVG formátu (čisté obrázky bez popisků)
+                patches_dir = r"C:\Users\USER\Desktop\patches"
+                os.makedirs(patches_dir, exist_ok=True)
                 
-                # import datetime
-                # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                import datetime
+                import matplotlib.pyplot as plt
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 
-                # for i in range(num_to_show):
-                #     img = images[i].permute(1, 2, 0).numpy()
-                #     mask = labels[i].permute(1, 2, 0).squeeze().numpy()
+                for i in range(num_to_show):
+                    img = images[i].permute(1, 2, 0).numpy()
+                    mask = labels[i].permute(1, 2, 0).squeeze().numpy()
                     
-                #     # Denormalizace pro uložení
-                #     mean = np.array([0.485, 0.456, 0.406]) 
-                #     std = np.array([0.229, 0.224, 0.225])
-                #     img_denorm = img * std + mean
-                #     img_denorm = np.clip(img_denorm, 0, 1)
+                    # Denormalizace pro zobrazení
+                    mean = np.array([0.485, 0.456, 0.406]) 
+                    std = np.array([0.229, 0.224, 0.225])
+                    img_denorm = img * std + mean
+                    img_denorm = np.clip(img_denorm, 0, 1)
                     
-                #     # Převod na 0-255 pro uložení
-                #     img_uint8 = (img_denorm * 255).astype(np.uint8)
+                    # Výpočet procenta karcinomu pro název souboru
+                    cancer_perc = np.sum(mask > 0.5) / mask.size * 100
                     
-                #     # Uložení pouze obrázku
-                #     img_pil = Image.fromarray(img_uint8)
+                    # Uložení obrázku (bez os, titulků, rámečků)
+                    fig = plt.figure(figsize=(4, 4))
+                    plt.imshow(img_denorm)
+                    plt.axis('off')  # Odstraní osy
+                    plt.gca().set_position([0, 0, 1, 1])  # Celý obrázek bez okrajů
                     
-                #     # Výpočet procenta karcinomu pro název souboru
-                #     cancer_perc = np.sum(mask > 0.5) / mask.size * 100
+                    img_filename = f"patch_{timestamp}_{i:02d}_image_cancer{cancer_perc:.1f}pct.png"
+                    img_path = os.path.join(patches_dir, img_filename)
+                    plt.savefig(img_path, format='png', bbox_inches='tight', pad_inches=0, dpi=300)
+                    plt.close()
                     
-                #     # Název souboru s procentem karcinomu
-                #     img_filename = f"patch_{timestamp}_{i:02d}_cancer{cancer_perc:.1f}pct.png"
-                #     img_path = os.path.join(patches_dir, img_filename)
-                #     img_pil.save(img_path)
+                    # Uložení masky s červeným ohraničením (bez os, titulků, rámečků)
+                    fig = plt.figure(figsize=(4, 4))
+                    plt.imshow(mask, cmap="gray", vmin=0, vmax=1)
+                    plt.axis('off')  # Odstraní osy
+                    plt.gca().set_position([0, 0, 1, 1])  # Celý obrázek bez okrajů
                     
-                #     print(f"Uložen výřezek {i}: {img_filename}")
+                    # Přidání červeného ohraničení
+                    ax = plt.gca()
+                    for spine in ax.spines.values():
+                        spine.set_visible(True)
+                        spine.set_color('red')
+                        spine.set_linewidth(2)
+                    
+                    mask_filename = f"patch_{timestamp}_{i:02d}_mask_cancer{cancer_perc:.1f}pct.png"
+                    mask_path = os.path.join(patches_dir, mask_filename)
+                    plt.savefig(mask_path, format='png', bbox_inches='tight', pad_inches=0, dpi=300)
+                    plt.close()
+                    
+                    print(f"Uložena dlaždice {i}: {img_filename} a {mask_filename}")
                 
-                # print(f"Všechny výřezky uloženy do: {patches_dir}")
+                print(f"Všechny dlaždice uloženy ve SVG formátu do: {patches_dir}")
                 
         except StopIteration:
              print("Chyba: DataLoader je prázdný. Zkontrolujte délku datasetu, __len__ metodu, nebo jestli jsou dostupné WSI po filtraci v __init__.")

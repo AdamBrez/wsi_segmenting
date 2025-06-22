@@ -14,9 +14,9 @@ import torch
 Vizualizace vytvořených masek, a jejich porovnání s ground truth maskou.
 """
 
-gt_mask_path = r"F:\wsi_dir_test\mask_008.tif"
-hdf5_path = r"C:\Users\USER\Desktop\test_preds\deeplab\pred_008.h5"
-hdf5_path2 = r"C:\Users\USER\Desktop\test_preds\lung\cam_pretrained_pred_006.h5"
+gt_mask_path = r"F:\wsi_dir_test\mask_016.tif"
+hdf5_path = r"C:\Users\USER\Desktop\test_preds\unetpp\pred_016.h5"
+hdf5_path2 = r"C:\Users\USER\Desktop\test_preds\unetpp\pred_016.h5"
 
 with h5py.File(hdf5_path, "r") as f:
     mask = f["mask"][:] # Načte jako uint8 (0, 1)
